@@ -1,0 +1,154 @@
+{% extends 'asistente/base.html' %}
+{% block title %}Chat - Asistente{% endblock %}
+{% block content %}
+<style>
+    body { background: linear-gradient(135deg, #020617, #08111f 48%, #030712); color: #e5e7eb; }
+    nav { background: rgba(2, 6, 23, 0.84) !important; border-color: rgba(148, 163, 184, 0.12) !important; }
+    .page { width: min(980px, calc(100vw - 32px)); margin: 0 auto; text-align: left; }
+    .panel { background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(148, 163, 184, 0.13); border-radius: 20px; box-shadow: 0 24px 70px rgba(0,0,0,.34); overflow: hidden; }
+    .chat-box { min-height: 58vh; max-height: 62vh; overflow-y: auto; background: radial-gradient(circle at 50% 0%, rgba(59,130,246,.08), transparent 28rem), #0b1220; }
+    .msg { display: flex; gap: 10px; margin-bottom: 14px; }
+    .msg.user { flex-direction: row-reverse; }
+    .avatar { width: 34px; height: 34px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg,#2563eb,#0f766e); color: white; font-size: 12px; font-weight: 800; flex-shrink: 0; }
+    .avatar.user { background: #334155; }
+    .bubble { max-width: min(760px, 78%); padding: 11px 14px; border-radius: 18px; font-size: 14px; line-height: 1.55; background: rgba(30,41,59,.92); border: 1px solid rgba(148,163,184,.13); color: #e5e7eb; }
+    .user .bubble { background: linear-gradient(135deg,#2563eb,#1d4ed8); color: white; border-color: transparent; }
+    .input { background: rgba(2,6,23,.8); border: 1px solid rgba(148,163,184,.16); border-radius: 16px; color: #f8fafc; }
+    .btn { border-radius: 14px; background: linear-gradient(135deg,#2563eb,#0f766e); color: white; font-weight: 700; }
+    .muted { color: #94a3b8; }
+</style>
+
+{% if not perfil %}
+<div class="page panel p-6">Configura tu perfil primero.</div>
+{% else %}
+<div class="page">
+    <div class="mb-5">
+        <p class="muted text-sm">{{ perfil.nombre_asistente }} esta listo</p>
+        <h1 class="text-3xl font-bold text-white">Chat</h1>
+    </div>
+
+    <div class="panel">
+        <div class="flex items-center justify-between p-4 border-b border-white/10">
+            <div>
+                <div class="font-bold text-white">{{ perfil.nombre_asistente }}</div>
+                <div class="text-xs text-green-400">En linea</div>
+            </div>
+            <button onclick="limpiarChat()" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm">Limpiar</button>
+        </div>
+        <div id="chat-box" class="chat-box p-5">
+            <div class="max-w-xl">
+                <h2 class="text-xl font-bold text-white">Listo para ayudarte</h2>
+                <p class="muted mt-2 text-sm">Escribe una pregunta o pide una tarea de desarrollo.</p>
+            </div>
+        </div>
+        <div class="p-4 border-t border-white/10">
+            <div class="flex gap-3">
+                <div class="input flex-1 flex items-center px-4 py-3">
+                    <input id="chat-input" class="flex-1 bg-transparent outline-none text-sm" placeholder="Escriba su mensaje..." onkeydown="if(event.key==='Enter') enviarMensaje()">
+                </div>
+                <button onclick="enviarMensaje()" class="btn px-5">Enviar</button>
+            </div>
+            <label class="mt-3 inline-flex items-center gap-2 text-xs muted">
+                <input id="chat-bg-toggle" type="checkbox" class="accent-blue-500">
+                Ejecutar comandos largos en segundo plano
+            </label>
+            <audio id="audio-player" class="hidden" preload="auto"></audio>
+        </div>
+    </div>
+</div>
+
+<script>
+const CHAT_SESSION_KEY = 'asistente_chat_session_id';
+
+function crearSessionId() {
+    return crypto.randomUUID ? crypto.randomUUID() : 'sesion-' + Date.now();
+}
+
+function obtenerChatSessionId() {
+    let id = localStorage.getItem(CHAT_SESSION_KEY);
+    if (!id) {
+        id = crearSessionId();
+        localStorage.setItem(CHAT_SESSION_KEY, id);
+    }
+    return id;
+}
+
+function nuevaSesionChat() {
+    const id = crearSessionId();
+    localStorage.setItem(CHAT_SESSION_KEY, id);
+}
+
+function agregarBurbuja(texto, rol, loading=false) {
+    const box = document.getElementById('chat-box');
+    const id = 'msg-' + Date.now();
+    const user = rol === 'user';
+    box.innerHTML += `
+        <div id="${id}" class="msg ${user ? 'user' : ''}">
+            <div class="avatar ${user ? 'user' : ''}">${user ? 'U' : 'A'}</div>
+            <div class="bubble ${loading ? 'animate-pulse' : ''}">${texto}</div>
+        </div>`;
+    box.scrollTop = box.scrollHeight;
+    return id;
+}
+
+async function cargarHistorialChat() {
+    const sessionId = obtenerChatSessionId();
+    const res = await fetch(`/api/chat/historial/?session_id=${encodeURIComponent(sessionId)}&canal=web`);
+    const data = await res.json();
+    if (!data.mensajes || data.mensajes.length === 0) return;
+    document.getElementById('chat-box').innerHTML = '';
+    data.mensajes.forEach(m => agregarBurbuja(escapeHtml(m.contenido).replace(/\n/g, '<br>'), m.rol));
+}
+
+async function enviarMensaje() {
+    const input = document.getElementById('chat-input');
+    const texto = input.value.trim();
+    if (!texto) return;
+    const bgToggle = document.getElementById('chat-bg-toggle');
+    agregarBurbuja(escapeHtml(texto), 'user');
+    input.value = '';
+    const loadingId = agregarBurbuja('...', 'assistant', true);
+    try {
+        const res = await fetch('/api/chat/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                mensaje: texto,
+                segundo_plano: bgToggle.checked,
+                session_id: obtenerChatSessionId(),
+                canal: 'web'
+            })
+        });
+        const data = await res.json();
+        document.getElementById(loadingId)?.remove();
+        let respuesta = escapeHtml(data.respuesta || data.error || 'Sin respuesta.').replace(/\n/g, '<br>');
+        if (data.segundo_plano && data.tarea_id) {
+            respuesta += `<br><br><a class="text-blue-300 underline" href="/tareas/">Ver historial de tareas</a>`;
+        }
+        agregarBurbuja(respuesta, 'assistant');
+        if (data.audio_url) reproducirAudio(data.audio_url);
+    } catch(e) {
+        document.getElementById(loadingId)?.remove();
+        agregarBurbuja('Hubo un error de conexion.', 'assistant');
+    }
+}
+
+function limpiarChat() {
+    nuevaSesionChat();
+    document.getElementById('chat-box').innerHTML = '<p class="muted">Chat limpio. Escribe un nuevo mensaje.</p>';
+}
+
+function reproducirAudio(url) {
+    const audio = document.getElementById('audio-player');
+    audio.src = url;
+    audio.play().catch(() => {});
+}
+
+function escapeHtml(texto) {
+    return String(texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+cargarHistorialChat();
+</script>
+{% endif %}
+{% endblock %}

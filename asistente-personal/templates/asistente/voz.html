@@ -1,0 +1,119 @@
+{% extends 'asistente/base.html' %}
+{% block title %}Voz y Ajustes - Asistente{% endblock %}
+{% block content %}
+<style>
+    body { background: linear-gradient(135deg, #020617, #08111f 48%, #030712); color: #e5e7eb; }
+    nav { background: rgba(2, 6, 23, 0.84) !important; border-color: rgba(148, 163, 184, 0.12) !important; }
+    .page { width: min(1040px, calc(100vw - 32px)); margin: 0 auto; text-align: left; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .card { background: rgba(15,23,42,.78); border: 1px solid rgba(148,163,184,.13); border-radius: 18px; box-shadow: 0 18px 45px rgba(0,0,0,.24); }
+    .muted { color: #94a3b8; }
+    .input { background: rgba(2,6,23,.72); color: #f8fafc; border: 1px solid rgba(148,163,184,.18); border-radius: 12px; }
+    @media (max-width: 850px) { .grid { grid-template-columns: 1fr; } }
+</style>
+
+{% if not perfil %}
+<div class="page card p-6">Configura tu perfil primero.</div>
+{% else %}
+<div class="page">
+    <div class="mb-5">
+        <p class="muted text-sm">Preferencias del asistente</p>
+        <h1 class="text-3xl font-bold text-white">Voz, perfil y comandos</h1>
+    </div>
+
+    <div class="grid">
+        <section class="card p-5">
+            <h2 class="font-bold text-white mb-4">Voz del asistente</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs muted mb-1.5 block">Voz</label>
+                    <select id="voz-select" onchange="actualizarVoz()" class="input w-full px-3 py-2.5 text-sm outline-none">
+                        <option value="">Cargando voces...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs muted mb-1.5 block">Velocidad: <span id="velocidad-valor">1.0x</span></label>
+                    <input type="range" id="velocidad-slider" min="0.5" max="2" step="0.1" value="1" oninput="actualizarVelocidad()" class="w-full accent-blue-500">
+                </div>
+                <button onclick="probarVoz()" class="w-full py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-500 transition">Probar voz</button>
+            </div>
+        </section>
+
+        <section class="card p-5">
+            <h2 class="font-bold text-white mb-4">Perfil</h2>
+            <div class="space-y-3 text-sm">
+                <div class="flex justify-between gap-4"><span class="muted">Usuario</span><span>{{ perfil.nombre_usuario }}</span></div>
+                <div class="flex justify-between gap-4"><span class="muted">Asistente</span><span class="text-blue-400">{{ perfil.nombre_asistente }}</span></div>
+                <div class="flex justify-between gap-4"><span class="muted">CV</span><span>{% if perfil.cv_archivo %}Cargado{% else %}Sin CV{% endif %}</span></div>
+            </div>
+            <a href="/configurar/" class="mt-5 inline-flex px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-semibold">Editar perfil</a>
+        </section>
+
+        <section class="card p-5 md:col-span-2">
+            <h2 class="font-bold text-white mb-2">Comandos rapidos</h2>
+            <p class="muted text-sm mb-4">Usalos desde la pagina de chat.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-cyan-300">/help</span><span class="muted text-sm">Ver comandos</span></a>
+                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-green-300">/crear</span><span class="muted text-sm">Crear proyecto</span></a>
+                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-orange-300">/git</span><span class="muted text-sm">Operaciones Git</span></a>
+                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-blue-300">/docker</span><span class="muted text-sm">Docker</span></a>
+                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-purple-300">/abrir</span><span class="muted text-sm">Abrir apps</span></a>
+                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-yellow-300">/sys</span><span class="muted text-sm">Info sistema</span></a>
+            </div>
+        </section>
+    </div>
+</div>
+
+<script>
+let vocesDisponibles = [];
+let vozActual = '';
+let velocidadActual = 1.0;
+
+async function cargarVoces() {
+    try {
+        const res = await fetch('/api/voces/');
+        const data = await res.json();
+        vocesDisponibles = data.voces;
+        const vozRes = await fetch('/api/voz/actual/');
+        const vozData = await vozRes.json();
+        vozActual = vozData.voz;
+        velocidadActual = vozData.velocidad;
+        const select = document.getElementById('voz-select');
+        select.innerHTML = vocesDisponibles.map(v => `<option value="${v.codigo}" ${v.codigo === vozActual ? 'selected' : ''}>${v.nombre}</option>`).join('');
+        document.getElementById('velocidad-slider').value = velocidadActual;
+        document.getElementById('velocidad-valor').textContent = velocidadActual + 'x';
+    } catch(e) {}
+}
+
+async function actualizarVoz() {
+    await guardarVoz({voz: document.getElementById('voz-select').value});
+}
+
+function actualizarVelocidad() {
+    const velocidad = document.getElementById('velocidad-slider').value;
+    document.getElementById('velocidad-valor').textContent = velocidad + 'x';
+    guardarVoz({velocidad});
+}
+
+async function guardarVoz(params) {
+    await fetch('/api/voz/actualizar/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(params)
+    });
+}
+
+async function probarVoz() {
+    const res = await fetch('/api/chat/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mensaje: '[PRUEBA_VOZ] Hola, soy tu asistente virtual. Esta es una prueba de voz.'})
+    });
+    const data = await res.json();
+    if (data.audio_url) new Audio(data.audio_url).play();
+}
+
+cargarVoces();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,128 @@
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+!.env_example
+!.env_example.txt
+!.env.example.txt
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*secret*
+*secrets*
+*password*
+*passwd*
+*token*
+
+# Private prompts, notes and local agent context
+promp.ai
+prompt.ai
+prompts/
+private_prompts/
+*.prompt
+*.prompts
+.agents/
+.codex/
+
+# Django local state
+db.sqlite3
+*.sqlite3
+*.sqlite
+local_settings.py
+staticfiles/
+media/
+background_tasks.json
+whatsapp_line_settings.json
+
+# Uploaded private files and generated audio
+media/audios/
+media/cvs/
+audios/
+cvs/
+**/audios/
+**/cvs/
+*.wav
+*.mp3
+*.ogg
+*.m4a
+
+# WhatsApp and Baileys private sessions
+baileys-service/.env
+baileys-service/.env.*
+!baileys-service/.env.example
+!baileys-service/.env_example
+baileys-service/baileys_sessions/
+baileys-service/baileys_auth_info/
+baileys_sessions/
+baileys_auth_info/
+**/baileys_sessions/
+**/baileys_auth_info/
+baileys-service/*session*/
+baileys-service/*auth*/
+**/*session*/
+**/*auth*/
+baileys-service/*.log
+baileys-service/temp_*
+
+# Node.js
+node_modules/
+baileys-service/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Virtual environments
+venv/
+.venv/
+env/
+.envdir/
+
+# Local models and large binaries
+piper_models/
+*.onnx
+*.onnx.json
+*.pt
+*.pth
+*.bin
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs and runtime files
+*.log
+*.pid
+*.tmp
+tmp/
+temp/
+
+# Backups and archives
+*.bak
+*.backup
+*.backup-*
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z

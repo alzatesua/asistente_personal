@@ -1,0 +1,74 @@
+# Private project context and prompts
+promp.ai
+prompt.ai
+inicio.txt
+*.prompt
+*.prompts
+prompts/
+private_prompts/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*secret*
+*secrets*
+*password*
+*passwd*
+*token*
+
+# Local assistants and agent context
+.agents/
+.codex/
+
+# Python and Node dependencies
+venv/
+.venv/
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Django and generated local data
+db.sqlite3
+*.sqlite3
+media/
+audios/
+cvs/
+**/audios/
+**/cvs/
+staticfiles/
+background_tasks.json
+whatsapp_line_settings.json
+
+# WhatsApp/Baileys sessions and logs
+baileys_sessions/
+baileys_auth_info/
+**/baileys_sessions/
+**/baileys_auth_info/
+*session*/
+*auth*/
+**/*session*/
+**/*auth*/
+*.log
+temp_*
+
+# Local models and generated audio
+piper_models/
+*.onnx
+*.onnx.json
+*.wav
+*.mp3
+*.ogg
+*.m4a
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
