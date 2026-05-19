@@ -16,8 +16,10 @@ idna==3.14
 kombu==5.6.2
 packaging==26.2
 pillow==12.2.0
+piper-tts==1.4.2
 prompt_toolkit==3.0.52
 pydub==0.25.1
+pyttsx3==2.99
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 redis==7.4.0
@@ -32,3 +34,5 @@ wcwidth==0.7.0
 edge-tts==6.1.12
 deepgram-sdk==3.7.0
 pygame==2.6.1
+gunicorn==23.0.0
+PyPDF2==3.0.1

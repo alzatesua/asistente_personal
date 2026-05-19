@@ -2,12 +2,31 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env', override=True)
+
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
+
+# ALLOWED_HOSTS con soporte para wildcards (*.dominio.com)
+_allowed_hosts_raw = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
+ALLOWED_HOSTS = [h for h in _allowed_hosts_raw if not h.startswith('*')]
+ALLOWED_HOST_WILDCARDS = [h[2:] if h.startswith('*.') else h for h in _allowed_hosts_raw if h.startswith('*')]
+
+# CSRF_TRUSTED_ORIGINS (el middleware WildcardAllowedHostMiddleware lo actualiza dinámicamente)
+# También agregamos wildcards explícitamente aquí para cubrir casos comunes
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost,http://127.0.0.1').split(',')
+# Agregar todos los posibles subdominios de los wildcards
+for wildcard in ALLOWED_HOST_WILDCARDS:
+    # Agregar el dominio base
+    CSRF_TRUSTED_ORIGINS.append(f'https://{wildcard}')
+    CSRF_TRUSTED_ORIGINS.append(f'http://{wildcard}')
+    # Nota: No podemos agregar todos los subdominios posibles aquí,
+    # el middleware se encargará de agregarlos dinámicamente
+
+# Deshabilitar verificación estricta de origen CSRF (confiar en el token)
+# Nota: Django no acepta '*' como wildcard en CSRF_TRUSTED_ORIGINS
+# El middleware WildcardAllowedHostMiddleware agregará orígenes dinámicamente
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -25,11 +44,13 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'asistente.middleware.WildcardAllowedHostMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'asistente.middleware.SingleUserAuthRequiredMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -73,6 +94,15 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/login/'
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False') == 'True'
+
 CORS_ALLOW_ALL_ORIGINS = True
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('DATA_UPLOAD_MAX_MEMORY_SIZE', 25 * 1024 * 1024))
 
@@ -88,7 +118,7 @@ ZAI_BASE_URL = os.getenv('ZAI_BASE_URL')
 ZAI_MODEL = os.getenv('ZAI_MODEL', 'glm-4')
 
 # Baileys
-BAILEYS_SERVICE_URL = os.getenv('BAILEYS_SERVICE_URL', 'http://localhost:3002')
+BAILEYS_SERVICE_URL = os.getenv('BAILEYS_SERVICE_URL', 'http://localhost:3003')
 BAILEYS_WEBHOOK_SECRET = os.getenv('BAILEYS_WEBHOOK_SECRET')
 DJANGO_WEBHOOK_URL = os.getenv('DJANGO_WEBHOOK_URL', 'http://localhost:8005/webhook/whatsapp/')
 WHATSAPP_BULK_MAX_RECIPIENTS = int(os.getenv('WHATSAPP_BULK_MAX_RECIPIENTS', 50))

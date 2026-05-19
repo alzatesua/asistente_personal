@@ -2124,13 +2124,23 @@ class SchedulerService:
         """Ejecuta una tarea específica según su tipo."""
         print(f"[SCHEDULER] Ejecutando tarea: {tarea.titulo} ({tarea.tipo_accion})")
 
+        if tarea.tipo_accion == 'whatsapp' and tarea.parametros.get('numeros'):
+            tarea.estado = 'ejecutando'
+            tarea.save()
+            threading.Thread(
+                target=self._ejecutar_campana_whatsapp,
+                args=(tarea.id,),
+                daemon=True,
+            ).start()
+            return
+
         # Marcar como ejecutando
         tarea.estado = 'ejecutando'
         tarea.save()
 
         try:
             if tarea.tipo_accion == 'whatsapp':
-                resultado = self._enviar_whatsapp(tarea.parametros)
+                resultado = self._enviar_whatsapp(tarea.parametros, tarea.perfil)
                 tarea.marcar_ejecutada(exitoso=resultado['exito'], resultado=resultado.get('mensaje'), error=resultado.get('error'))
 
             elif tarea.tipo_accion == 'comando_pc':
@@ -2165,9 +2175,37 @@ class SchedulerService:
             print(f"[SCHEDULER] Error ejecutando tarea {tarea.id}: {e}")
             tarea.marcar_ejecutada(exitoso=False, error=str(e))
 
-    def _enviar_whatsapp(self, parametros):
+    def _ejecutar_campana_whatsapp(self, tarea_id):
+        """Ejecuta campañas masivas sin bloquear el loop principal del scheduler."""
+        from asistente.models import TareaProgramada
+
+        try:
+            tarea = TareaProgramada.objects.get(id=tarea_id)
+            parametros = dict(tarea.parametros or {})
+            parametros['_tarea_id'] = tarea.id
+            resultado = self._enviar_whatsapp(parametros, tarea.perfil)
+            tarea.marcar_ejecutada(
+                exitoso=resultado['exito'],
+                resultado=resultado.get('mensaje'),
+                error=resultado.get('error'),
+            )
+            if tarea.repetir:
+                self._programar_siguiente_instancia(tarea)
+        except Exception as e:
+            print(f"[SCHEDULER] Error ejecutando campaña WhatsApp {tarea_id}: {e}")
+            try:
+                tarea = TareaProgramada.objects.get(id=tarea_id)
+                tarea.marcar_ejecutada(exitoso=False, error=str(e))
+            except Exception:
+                pass
+
+    def _enviar_whatsapp(self, parametros, perfil=None):
         """Envía un mensaje de WhatsApp a través del baileys-service."""
         import requests
+
+        numeros = parametros.get('numeros') or parametros.get('destinatarios')
+        if numeros:
+            return self._enviar_whatsapp_masivo(parametros, perfil)
 
         numero = parametros.get('numero', '')
         mensaje = parametros.get('mensaje', '')
@@ -2201,6 +2239,162 @@ class SchedulerService:
 
         except Exception as e:
             return {'exito': False, 'error': str(e)}
+
+    def _limpiar_numero_whatsapp(self, numero):
+        limpio = ''.join(c for c in str(numero or '') if c.isdigit())
+        codigo_pais = ''.join(c for c in str(getattr(settings, 'WHATSAPP_DEFAULT_COUNTRY_CODE', '57')) if c.isdigit()) or '57'
+        if len(limpio) == 10 and limpio.startswith('3'):
+            return f"{codigo_pais}{limpio}"
+        if len(limpio) == 11 and limpio.startswith('03'):
+            return f"{codigo_pais}{limpio[1:]}"
+        return limpio
+
+    def _preparar_mensaje_whatsapp_masivo(self, parametros, perfil):
+        modo = (parametros.get('modo_contenido') or 'mensaje').strip().lower()
+        if modo == 'prompt':
+            prompt = (parametros.get('prompt') or '').strip()
+            if not prompt:
+                raise ValueError('Falta el prompt para generar el mensaje')
+            if not perfil:
+                raise ValueError('No hay perfil configurado para generar el mensaje')
+            instruccion = (
+                "Redacta un único mensaje de WhatsApp listo para enviar. "
+                "No incluyas explicación, asunto, comillas ni alternativas. "
+                f"Instrucción del usuario: {prompt}"
+            )
+            return GLMService().chat(instruccion, perfil, [], canal='whatsapp').strip()
+        return (parametros.get('mensaje') or '').strip()
+
+    def _enviar_whatsapp_masivo(self, parametros, perfil=None):
+        """Envía una campaña de WhatsApp a varios números con delay configurable."""
+        from asistente.models import Conversacion, Mensaje
+        import random
+
+        linea = (parametros.get('linea') or 'principal').strip() or 'principal'
+        formato = (parametros.get('formato') or 'texto').strip().lower()
+        url_baileys = getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002'
+        numeros_raw = parametros.get('numeros') or []
+        if isinstance(numeros_raw, str):
+            numeros_raw = re.split(r'[\s,;]+', numeros_raw)
+
+        vistos = set()
+        numeros = []
+        for item in numeros_raw:
+            limpio = self._limpiar_numero_whatsapp(item)
+            if limpio and limpio not in vistos:
+                numeros.append(limpio)
+                vistos.add(limpio)
+
+        if not numeros:
+            return {'exito': False, 'error': 'No hay números válidos para enviar'}
+
+        mensaje = self._preparar_mensaje_whatsapp_masivo(parametros, perfil)
+        if not mensaje:
+            return {'exito': False, 'error': 'El mensaje quedó vacío'}
+
+        try:
+            delay_min = float(parametros.get('delay_min', 1) or 1)
+            delay_max = float(parametros.get('delay_max', delay_min) or delay_min)
+        except (TypeError, ValueError):
+            delay_min, delay_max = 1, 1
+        delay_min = max(0, delay_min)
+        delay_max = max(delay_min, delay_max)
+        delay_unit = (parametros.get('delay_unit') or 'segundos').strip().lower()
+        delay_factor = 60 if delay_unit == 'minutos' else 1
+        delay_min_seconds = delay_min * delay_factor
+        delay_max_seconds = delay_max * delay_factor
+
+        audio_url = None
+        if formato == 'audio':
+            if not perfil:
+                return {'exito': False, 'error': 'No hay perfil configurado para generar audio'}
+            audio_url = TTSService().generar_audio(
+                mensaje,
+                voz=perfil.voz_preferida,
+                velocidad=perfil.voz_velocidad,
+            )
+
+        enviados = []
+        fallidos = []
+        pausas = []
+        total = len(numeros)
+
+        def actualizar_progreso(actual, numero_actual='', estado_extra='ejecutando'):
+            try:
+                tarea_id = parametros.get('_tarea_id')
+                if not tarea_id:
+                    return
+                from asistente.models import TareaProgramada
+                tarea_progreso = TareaProgramada.objects.get(id=tarea_id)
+                nuevos_parametros = dict(tarea_progreso.parametros or {})
+                nuevos_parametros['progreso'] = {
+                    'actual': actual,
+                    'total': total,
+                    'enviados': len(enviados),
+                    'fallidos': len(fallidos),
+                    'numero_actual': numero_actual,
+                    'estado': estado_extra,
+                }
+                tarea_progreso.parametros = nuevos_parametros
+                tarea_progreso.save(update_fields=['parametros'])
+            except Exception as exc:
+                print(f"[SCHEDULER] No pude actualizar progreso WhatsApp: {exc}")
+
+        actualizar_progreso(0, '', 'iniciando')
+        for idx, numero in enumerate(numeros, 1):
+            actualizar_progreso(idx - 1, numero, 'enviando')
+            try:
+                endpoint = 'send-audio' if formato == 'audio' else 'send-message'
+                payload = {'numero': numero, 'linea': linea}
+                if formato == 'audio':
+                    payload['audio_url'] = audio_url
+                else:
+                    payload['mensaje'] = mensaje
+
+                response = requests.post(f"{url_baileys}/{endpoint}", json=payload, timeout=60)
+                if response.status_code == 200:
+                    enviados.append(numero)
+                    if perfil:
+                        conversacion, _ = Conversacion.objects.get_or_create(
+                            perfil=perfil,
+                            numero_whatsapp=f"{linea}:{numero}"[:80],
+                        )
+                        Mensaje.objects.create(
+                            conversacion=conversacion,
+                            tipo='voz' if formato == 'audio' else 'texto',
+                            origen='saliente',
+                            contenido=mensaje,
+                            audio_url=audio_url,
+                            respondido=True,
+                        )
+                else:
+                    fallidos.append(f"{numero}: {response.text[:220]}")
+            except Exception as exc:
+                fallidos.append(f"{numero}: {exc}")
+
+            actualizar_progreso(idx, numero, 'pausando' if idx < total else 'finalizando')
+            if idx < len(numeros) and delay_max_seconds > 0:
+                pausa = random.uniform(delay_min_seconds, delay_max_seconds)
+                pausas.append(round(pausa, 2))
+                time.sleep(pausa)
+
+        actualizar_progreso(total, '', 'terminada')
+
+        resumen = (
+            f"Campaña WhatsApp por línea {linea}. "
+            f"Formato: {formato}. Enviados: {len(enviados)} de {len(numeros)}. "
+            f"Espera configurada: {delay_min}-{delay_max} {delay_unit}."
+        )
+        if pausas:
+            resumen += f"\nPausas aplicadas (segundos): {', '.join(str(p) for p in pausas[:20])}"
+        if fallidos:
+            resumen += "\nFallidos:\n" + "\n".join(fallidos[:30])
+
+        return {
+            'exito': len(enviados) > 0 and len(fallidos) == 0,
+            'mensaje': resumen,
+            'error': None if not fallidos else resumen,
+        }
 
     def _ejecutar_accion_sistema(self, accion):
         """Ejecuta acciones de sistema como bloquear, suspender, etc."""

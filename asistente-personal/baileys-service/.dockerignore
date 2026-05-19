@@ -1,0 +1,7 @@
+node_modules/
+baileys_sessions/
+*.log
+.git/
+.env
+agents/
+.codex/

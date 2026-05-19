@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  django:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8095:8000"
+    volumes:
+      - staticfiles:/app/staticfiles
+      - media:/app/media
+      - db:/app/db
+    env_file:
+      - .env
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG}
+      - ALLOWED_HOSTS=localhost,*.ia.dagi.co
+      - CSRF_TRUSTED_ORIGINS=http://localhost,https://amigo.ia.dagi.co,https://*.ia.dagi.co
+      - REDIS_URL=redis://redis:6379/0
+      - BAILEYS_SERVICE_URL=http://baileys:3002
+      - DJANGO_WEBHOOK_URL=https://asistente-dago.ia.dagi.co/webhook/whatsapp/
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+    depends_on:
+      - redis
+
+  baileys:
+    build: ./baileys-service
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8096:3002"
+    volumes:
+      - baileys_sessions:/app/baileys_sessions
+    environment:
+      - PORT=3002
+      - HOST=0.0.0.0
+      - DJANGO_WEBHOOK_URL=https://asistente-dago.ia.dagi.co/webhook/whatsapp/
+    depends_on:
+      - django
+
+volumes:
+  redis_data:
+  staticfiles:
+  media:
+  baileys_sessions:
+  db:
