@@ -92,6 +92,9 @@ REST_FRAMEWORK = {
     ]
 }
 
+# Ventana flotante local
+DESKTOP_API_USERNAME = os.getenv('DESKTOP_API_USERNAME', '').strip()
+
 # Z.AI / GLM
 ZAI_API_KEY = os.getenv('ZAI_API_KEY')
 ZAI_BASE_URL = os.getenv('ZAI_BASE_URL')

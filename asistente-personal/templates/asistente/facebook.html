@@ -1,0 +1,318 @@
+{% extends 'asistente/base.html' %}
+{% block title %}Facebook - Asistente{% endblock %}
+{% block content %}
+<style>
+    body { background: #071018; color: #e5e7eb; }
+    body::before { content: ''; position: fixed; inset: 0; z-index: -1; background:
+        linear-gradient(135deg, rgba(24,119,242,.13), transparent 32%),
+        linear-gradient(225deg, rgba(16,185,129,.08), transparent 36%),
+        #071018;
+    }
+    nav { background: rgba(7, 16, 24, .84) !important; border-color: rgba(148,163,184,.12) !important; }
+    main { padding-top: 22px !important; }
+    .page { width: min(1560px, calc(100vw - 28px)); margin: 0 auto; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: end; margin-bottom: 18px; }
+    .kicker { color: #93c5fd; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .title { font-size: clamp(30px, 4vw, 48px); line-height: 1; font-weight: 850; color: #f8fafc; margin-top: 6px; letter-spacing: 0; }
+    .copy { color: #9fb0c7; margin-top: 10px; max-width: 720px; }
+    .stats { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; min-width: min(430px, 100%); }
+    .stat, .card { background: rgba(15,23,42,.76); border: 1px solid rgba(148,163,184,.14); border-radius: 16px; box-shadow: 0 22px 60px rgba(0,0,0,.28); backdrop-filter: blur(18px); }
+    .stat { padding: 14px; }
+    .stat-label { color: #8fa3bd; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; }
+    .stat-value { color: #f8fafc; font-size: 22px; font-weight: 850; margin-top: 4px; }
+    .grid { display: grid; grid-template-columns: minmax(320px, .82fr) minmax(430px, 1.2fr) minmax(360px, .9fr); gap: 18px; align-items: start; }
+    .stack { display: grid; gap: 18px; }
+    .panel-title { color: #f8fafc; font-weight: 850; font-size: 17px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    .muted { color: #9fb0c7; }
+    .pill { display: inline-flex; align-items: center; min-height: 26px; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 800; border: 1px solid rgba(148,163,184,.15); background: rgba(15,23,42,.72); color: #cbd5e1; }
+    .pill.ok { color: #86efac; border-color: rgba(34,197,94,.3); background: rgba(22,163,74,.14); }
+    .pill.bad { color: #fca5a5; border-color: rgba(248,113,113,.28); background: rgba(127,29,29,.2); }
+    .btn { min-height: 40px; border-radius: 11px; padding: 8px 11px; font-size: 13px; font-weight: 800; transition: transform .12s ease, background .12s ease, border-color .12s ease; border: 1px solid transparent; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: #1877f2; color: #fff; box-shadow: 0 10px 24px rgba(24,119,242,.18); }
+    .btn-primary:hover { background: #2f86ff; }
+    .btn-neutral { background: rgba(51,65,85,.95); color: #e2e8f0; border-color: rgba(148,163,184,.12); }
+    .btn-danger { background: rgba(185,28,28,.96); color: #fff; }
+    .btn-on { background: rgba(22,163,74,.18); color: #86efac; border-color: rgba(34,197,94,.38); }
+    .btn-off { background: rgba(185,28,28,.16); color: #fca5a5; border-color: rgba(248,113,113,.3); }
+    .toggle-grid, .filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .cred-list { display: grid; gap: 8px; }
+    .cred { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px; border-radius: 12px; border: 1px solid rgba(148,163,184,.12); background: rgba(30,41,59,.52); }
+    .field { display: grid; gap: 6px; margin-top: 12px; }
+    .label { color: #8fa3bd; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+    .input, .textarea { width: 100%; background: rgba(7,12,22,.9); border: 1px solid rgba(148,163,184,.2); border-radius: 11px; color: #f8fafc; padding: 10px 11px; outline: none; }
+    .textarea { min-height: 88px; resize: vertical; }
+    .input:focus, .textarea:focus { border-color: rgba(96,165,250,.55); box-shadow: 0 0 0 3px rgba(24,119,242,.13); }
+    .list { display: grid; gap: 10px; max-height: calc(100vh - 245px); overflow: auto; padding-right: 4px; }
+    .conv { border: 1px solid rgba(148,163,184,.1); background: rgba(30,41,59,.72); border-radius: 14px; transition: border-color .12s ease, background .12s ease; overflow: hidden; }
+    .conv[open] { border-color: rgba(96,165,250,.32); background: rgba(24,35,52,.94); }
+    .summary { display: block; padding: 13px 14px; cursor: pointer; list-style: none; }
+    .summary::-webkit-details-marker { display: none; }
+    .top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; margin-bottom: 6px; }
+    .name { color: #f8fafc; font-weight: 850; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kind { color: #bfdbfe; background: rgba(37,99,235,.14); border: 1px solid rgba(96,165,250,.2); border-radius: 999px; padding: 3px 8px; font-size: 11px; font-weight: 800; }
+    .text { color: #b6c7dd; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .time { color: #61738d; font-size: 12px; margin-top: 6px; }
+    .chat { border-top: 1px solid rgba(148,163,184,.11); padding: 12px; }
+    .thread { display: grid; gap: 9px; max-height: 340px; overflow: auto; padding-right: 3px; }
+    .bubble { width: min(84%, 560px); border: 1px solid rgba(148,163,184,.12); border-radius: 14px; padding: 10px 11px; }
+    .bubble.in { justify-self: start; background: rgba(15,23,42,.86); color: #d6e3f3; }
+    .bubble.out { justify-self: end; background: rgba(24,119,242,.15); border-color: rgba(96,165,250,.24); color: #dbeafe; }
+    .meta { color: #7f92ad; font-size: 11px; font-weight: 800; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+    .compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; }
+    .empty { border: 1px dashed rgba(148,163,184,.2); border-radius: 14px; padding: 24px; text-align: center; color: #8fa3bd; background: rgba(15,23,42,.45); }
+    .code { font-family: 'JetBrains Mono', monospace; font-size: 12px; word-break: break-all; }
+    @media (max-width: 1280px) { .grid { grid-template-columns: minmax(340px, .9fr) minmax(0, 1.1fr); } .right { grid-column: 1 / -1; } }
+    @media (max-width: 900px) { .hero, .grid { grid-template-columns: 1fr; } .stats { min-width: 0; } .list { max-height: none; } .right { grid-column: auto; } }
+    @media (max-width: 560px) { .page { width: min(100%, calc(100vw - 24px)); } .stats, .toggle-grid, .filter-grid, .compose { grid-template-columns: 1fr; } }
+</style>
+
+<div class="page">
+    <div class="hero">
+        <div>
+            <p class="kicker">Meta Graph API</p>
+            <h1 class="title">Facebook</h1>
+            <p class="copy">Gestiona Messenger, comentarios de publicaciones, respuestas manuales y automatizaciones con IA desde una bandeja separada por usuario.</p>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Credenciales</div>
+                <div class="stat-value" id="cred-status">Checking...</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Entradas</div>
+                <div class="stat-value" id="msg-count">0</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="stack">
+            <section class="card p-5">
+                <div class="panel-head">
+                    <h2 class="panel-title">Conexión</h2>
+                    <span class="pill" id="graph-version">Meta</span>
+                </div>
+                <div class="cred-list" id="cred-list"></div>
+                <div class="field">
+                    <label class="label">Webhook URL</label>
+                    <input id="webhook-url" class="input code" readonly>
+                </div>
+                <div class="field">
+                    <label class="label">Permisos sugeridos</label>
+                    <div id="permissions" class="muted text-sm"></div>
+                </div>
+            </section>
+
+            <section class="card p-5">
+                <div class="panel-head">
+                    <h2 class="panel-title">Automatización</h2>
+                    <button onclick="borrarMemoriaFacebook()" class="btn btn-danger">Borrar memoria</button>
+                </div>
+                <div class="toggle-grid">
+                    <button id="cfg-auto_mensajes" class="btn btn-neutral" onclick="toggleCfg('auto_mensajes')">Messenger</button>
+                    <button id="cfg-auto_comentarios" class="btn btn-neutral" onclick="toggleCfg('auto_comentarios')">Comentarios</button>
+                    <button id="cfg-leer_mensajes" class="btn btn-neutral" onclick="toggleCfg('leer_mensajes')">Leer mensajes</button>
+                    <button id="cfg-leer_comentarios" class="btn btn-neutral" onclick="toggleCfg('leer_comentarios')">Leer comentarios</button>
+                </div>
+                <button id="cfg-responder_comentarios_publicamente" class="btn btn-neutral w-full mt-3" onclick="toggleCfg('responder_comentarios_publicamente')">Responder comentarios públicamente</button>
+            </section>
+        </div>
+
+        <div class="stack">
+            <section class="card p-5">
+                <div class="panel-head">
+                    <h2 class="panel-title">Bandeja Facebook</h2>
+                    <button onclick="cargarMensajes()" class="btn btn-neutral">Actualizar</button>
+                </div>
+                <div class="filter-grid mb-4">
+                    <button id="filter-todos" onclick="setFiltro('todos')" class="btn btn-primary">Todo</button>
+                    <button id="filter-message" onclick="setFiltro('message')" class="btn btn-neutral">Messenger</button>
+                    <button id="filter-comment" onclick="setFiltro('comment')" class="btn btn-neutral">Comentarios</button>
+                    <button onclick="cargarMensajes()" class="btn btn-neutral">Recargar</button>
+                </div>
+                <div id="lista-facebook" class="list text-sm muted"><p class="empty">Cargando actividad...</p></div>
+            </section>
+        </div>
+
+        <div class="stack right">
+            <section class="card p-5">
+                <div class="panel-head">
+                    <h2 class="panel-title">Cómo conectar</h2>
+                </div>
+                <div class="muted text-sm leading-6">
+                    <p>Configura estos valores en la pantalla Configurar, expón el webhook público con HTTPS y suscribe el objeto Page en Meta Developers.</p>
+                    <p class="mt-3">Para responder mensajes necesitas `pages_messaging`; para recibir eventos y suscribir webhooks, `pages_manage_metadata`; para leer y responder comentarios, `pages_read_engagement` y `pages_manage_engagement`.</p>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<script>
+let fbConfig = {};
+let filtro = 'todos';
+const loaded = new Set();
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text ?? '';
+    return div.innerHTML;
+}
+
+async function cargarConfig() {
+    const res = await fetch('/api/facebook/config/');
+    const data = await res.json();
+    fbConfig = data.config || {};
+    document.getElementById('graph-version').textContent = data.graph_version || 'Meta';
+    document.getElementById('webhook-url').value = data.webhook_url || '';
+    document.getElementById('permissions').textContent = (data.permisos_sugeridos || []).join(', ');
+    const creds = data.credenciales || {};
+    const okCount = Object.values(creds).filter(Boolean).length;
+    document.getElementById('cred-status').textContent = `${okCount}/${Object.keys(creds).length}`;
+    document.getElementById('cred-list').innerHTML = Object.entries(creds).map(([key, ok]) => `
+        <div class="cred">
+            <span class="code">${escapeHtml(key)}</span>
+            <span class="pill ${ok ? 'ok' : 'bad'}">${ok ? 'OK' : 'Falta'}</span>
+        </div>
+    `).join('');
+    pintarConfig();
+}
+
+function pintarConfig() {
+    const labels = {
+        auto_mensajes: ['Messenger ON', 'Messenger OFF'],
+        auto_comentarios: ['Comentarios ON', 'Comentarios OFF'],
+        leer_mensajes: ['Leer mensajes ON', 'Leer mensajes OFF'],
+        leer_comentarios: ['Leer comentarios ON', 'Leer comentarios OFF'],
+        responder_comentarios_publicamente: ['Respuesta pública ON', 'Respuesta pública OFF'],
+    };
+    for (const [key, value] of Object.entries(fbConfig)) {
+        const btn = document.getElementById(`cfg-${key}`);
+        if (!btn) continue;
+        btn.textContent = value ? labels[key][0] : labels[key][1];
+        btn.className = value ? 'btn btn-on' + (key.includes('publicamente') ? ' w-full mt-3' : '') : 'btn btn-off' + (key.includes('publicamente') ? ' w-full mt-3' : '');
+    }
+}
+
+async function toggleCfg(key) {
+    const payload = {[key]: !fbConfig[key]};
+    const res = await fetch('/api/facebook/configuracion/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || 'No se pudo guardar');
+    fbConfig = data.config || {};
+    pintarConfig();
+}
+
+function setFiltro(value) {
+    filtro = value;
+    for (const item of ['todos', 'message', 'comment']) {
+        const btn = document.getElementById(`filter-${item}`);
+        if (btn) btn.className = item === value ? 'btn btn-primary' : 'btn btn-neutral';
+    }
+    loaded.clear();
+    cargarMensajes();
+}
+
+async function cargarMensajes() {
+    if (document.querySelector('.conv[open]')) return;
+    const lista = document.getElementById('lista-facebook');
+    try {
+        const res = await fetch(`/api/facebook/mensajes/?tipo=${encodeURIComponent(filtro)}`);
+        const data = await res.json();
+        const mensajes = data.mensajes || [];
+        document.getElementById('msg-count').textContent = mensajes.length;
+        if (!mensajes.length) {
+            lista.innerHTML = '<p class="empty">Sin actividad de Facebook todavía</p>';
+            return;
+        }
+        lista.innerHTML = mensajes.map(m => {
+            const tipo = m.numero.includes(':comment:') ? 'Comentario' : 'Messenger';
+            return `
+                <details class="conv" id="conv-${m.conversacion_id}" ontoggle="if(this.open) cargarConversacion(${m.conversacion_id})">
+                    <summary class="summary">
+                        <div class="top">
+                            <span class="name">${escapeHtml(m.contacto || m.numero)}</span>
+                            <span class="kind">${tipo}</span>
+                        </div>
+                        <p class="text">${escapeHtml(m.contenido)}</p>
+                        <p class="time">${escapeHtml(m.creado_en)} · abrir conversación</p>
+                    </summary>
+                    <div id="chat-${m.conversacion_id}" class="chat"><p class="empty">Cargando...</p></div>
+                </details>
+            `;
+        }).join('');
+    } catch(e) {
+        lista.innerHTML = `<p class="empty">${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function cargarConversacion(id, force = false) {
+    const panel = document.getElementById(`chat-${id}`);
+    if (!panel || (loaded.has(id) && !force)) return;
+    panel.innerHTML = '<p class="empty">Cargando...</p>';
+    try {
+        const res = await fetch(`/api/facebook/conversacion/${id}/`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo cargar');
+        loaded.add(id);
+        const c = data.conversacion || {};
+        panel.innerHTML = `
+            <div class="thread">
+                ${(data.mensajes || []).map(renderMsg).join('') || '<p class="empty">Sin historial</p>'}
+            </div>
+            <div class="compose">
+                <textarea id="compose-${id}" class="textarea" placeholder="${c.tipo === 'comment' ? 'Responder comentario' : 'Responder por Messenger'}"></textarea>
+                <button class="btn btn-primary" onclick="enviar(${id})">Enviar</button>
+            </div>
+        `;
+    } catch(e) {
+        panel.innerHTML = `<p class="empty">${escapeHtml(e.message)}</p>`;
+    }
+}
+
+function renderMsg(m) {
+    const out = m.origen === 'saliente';
+    return `
+        <div class="bubble ${out ? 'out' : 'in'}">
+            <div class="meta">${out ? 'Enviado' : 'Entrante'} · ${escapeHtml(m.creado_en)}</div>
+            <div>${escapeHtml(m.contenido)}</div>
+        </div>
+    `;
+}
+
+async function enviar(id) {
+    const textarea = document.getElementById(`compose-${id}`);
+    const mensaje = (textarea?.value || '').trim();
+    if (!mensaje) return;
+    const res = await fetch(`/api/facebook/conversacion/${id}/enviar/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mensaje})
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || 'No se pudo enviar');
+    textarea.value = '';
+    loaded.delete(id);
+    cargarConversacion(id, true);
+}
+
+async function borrarMemoriaFacebook() {
+    if (!confirm('¿Borrar el historial local de Facebook para este usuario?')) return;
+    const res = await fetch('/api/facebook/borrar-memoria/', {method: 'POST'});
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || 'No se pudo borrar');
+    loaded.clear();
+    cargarMensajes();
+}
+
+cargarConfig();
+cargarMensajes();
+setInterval(cargarMensajes, 8000);
+</script>
+{% endblock %}

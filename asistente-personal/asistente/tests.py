@@ -24,6 +24,30 @@ class LoginSeguroTests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()['error'], 'Autenticacion requerida')
 
+    def test_api_ventana_local_autentica_usuario_unico(self):
+        user = User.objects.create_user(username='dagi', password='clave-segura')
+        PerfilAsistente.objects.create(usuario=user, nombre_usuario='Dagi')
+
+        response = self.client.get(
+            '/api/chat/historial/',
+            HTTP_X_ASISTENTE_DESKTOP='ventana-flotante',
+            REMOTE_ADDR='127.0.0.1',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['session_memory'], True)
+
+    def test_api_ventana_no_local_sigue_bloqueada(self):
+        User.objects.create_user(username='dagi', password='clave-segura')
+
+        response = self.client.get(
+            '/api/chat/historial/',
+            HTTP_X_ASISTENTE_DESKTOP='ventana-flotante',
+            REMOTE_ADDR='192.168.1.10',
+        )
+
+        self.assertEqual(response.status_code, 401)
+
     def test_login_usuario_activo(self):
         User.objects.create_user(username='dagi', password='clave-segura')
 

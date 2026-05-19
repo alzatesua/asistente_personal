@@ -22,6 +22,8 @@ class VentanaAsistente:
     def __init__(self):
         self.api_url = "http://localhost:8005"
         self.session_id = "ventana-flotante-local"
+        self.http = requests.Session()
+        self.http.headers.update({"X-Asistente-Desktop": "ventana-flotante"})
         self.estado = "listo"
         self.expandida = False
         self.animando = False
@@ -539,7 +541,7 @@ class VentanaAsistente:
         self.actualizar_estado("procesando")
         try:
             # Aumentado timeout a 90 segundos para permitir búsquedas web y comandos largos
-            response = requests.post(
+            response = self.http.post(
                 f"{self.api_url}/api/chat/",
                 json={"mensaje": texto, "session_id": self.session_id, "canal": "desktop"},
                 timeout=90,
@@ -590,7 +592,7 @@ class VentanaAsistente:
     def ejecutar_accion_pendiente(self, comando):
         try:
             # Aumentado timeout a 120 segundos para comandos muy largos
-            response = requests.post(
+            response = self.http.post(
                 f"{self.api_url}/api/acciones/ejecutar/",
                 json={"comando": comando, "session_id": self.session_id, "canal": "desktop"},
                 timeout=120,
@@ -634,7 +636,7 @@ class VentanaAsistente:
         self.actualizar_estado("procesando")
         try:
             while True:
-                response = requests.get(f"{self.api_url}/api/tareas/{tarea_id}/", timeout=10)
+                response = self.http.get(f"{self.api_url}/api/tareas/{tarea_id}/", timeout=10)
                 response.raise_for_status()
                 tarea = response.json().get("tarea", {})
                 estado = tarea.get("estado")
@@ -664,7 +666,7 @@ class VentanaAsistente:
     def obtener_resumen_audio_tarea(self, tarea_id):
         try:
             # Aumentado timeout a 60 segundos para generar el resumen de voz
-            response = requests.get(f"{self.api_url}/api/tareas/{tarea_id}/resumen-voz/", timeout=60)
+            response = self.http.get(f"{self.api_url}/api/tareas/{tarea_id}/resumen-voz/", timeout=60)
             response.raise_for_status()
             data = response.json()
             return data.get("resumen"), data.get("audio_url")

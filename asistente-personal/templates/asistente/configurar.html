@@ -44,6 +44,65 @@
             </div>
         </div>
 
+        <!-- Facebook / Meta -->
+        <div class="glass-card p-6">
+            <h2 class="font-semibold mb-5 flex items-center gap-2 text-blue-400">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                Facebook / Meta
+            </h2>
+            <p class="text-sm text-slate-400 mb-5">
+                Configure la página de Facebook de este usuario. Estos valores quedan separados por empresa y no se leen desde el archivo .env.
+            </p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-400 mb-2">Versión Graph API</label>
+                    <input type="text" name="meta_graph_api_version"
+                        value="{{ perfil.meta_graph_api_version|default:'v25.0' }}"
+                        placeholder="v25.0"
+                        class="w-full glass-input rounded-xl px-4 py-3 text-sm outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-2">Page ID</label>
+                    <input type="text" name="meta_page_id"
+                        value="{{ perfil.meta_page_id|default:'' }}"
+                        placeholder="123456789012345"
+                        class="w-full glass-input rounded-xl px-4 py-3 text-sm outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-2">Page Access Token</label>
+                    <textarea name="meta_page_access_token" rows="3"
+                        placeholder="EAAB..."
+                        class="w-full glass-input rounded-xl px-4 py-3 text-sm outline-none resize-y">{{ perfil.meta_page_access_token|default:'' }}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-2">App Secret</label>
+                    <input type="password" name="meta_app_secret"
+                        value="{{ perfil.meta_app_secret|default:'' }}"
+                        placeholder="Secreto de la app"
+                        autocomplete="off"
+                        class="w-full glass-input rounded-xl px-4 py-3 text-sm outline-none">
+                    <p class="text-xs text-slate-500 mt-2">Se usa para validar la firma X-Hub-Signature-256 de Meta.</p>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-2">Verify Token</label>
+                    <input type="text" name="meta_verify_token"
+                        value="{{ perfil.meta_verify_token|default:'' }}"
+                        placeholder="Invente un token seguro y úselo igual en Meta"
+                        class="w-full glass-input rounded-xl px-4 py-3 text-sm outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-2">Webhook URL pública</label>
+                    <input type="url" name="meta_webhook_url"
+                        value="{{ perfil.meta_webhook_url|default:'' }}"
+                        placeholder="https://su-dominio.com/webhook/facebook/"
+                        class="w-full glass-input rounded-xl px-4 py-3 text-sm outline-none">
+                    <p class="text-xs text-slate-500 mt-2">Debe ser HTTPS público para que Meta pueda verificarlo. Si lo deja vacío, el panel Facebook mostrará la URL del servidor actual.</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Hoja de Vida -->
         <div class="glass-card p-6">
             <h2 class="font-semibold mb-5 flex items-center gap-2 text-blue-400">

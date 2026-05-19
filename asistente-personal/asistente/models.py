@@ -23,6 +23,12 @@ class PerfilAsistente(models.Model):
     )
     voz_velocidad = models.FloatField(default=1.0, help_text='Velocidad de reproducción (0.5 - 2.0)')
     comandos_personalizados = models.TextField(null=True, blank=True, help_text='JSON con comandos adicionales permitidos')
+    meta_graph_api_version = models.CharField(max_length=20, default='v25.0', blank=True)
+    meta_page_id = models.CharField(max_length=100, blank=True, default='')
+    meta_page_access_token = models.TextField(blank=True, default='')
+    meta_app_secret = models.CharField(max_length=255, blank=True, default='')
+    meta_verify_token = models.CharField(max_length=255, blank=True, default='')
+    meta_webhook_url = models.URLField(max_length=500, blank=True, default='')
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
 

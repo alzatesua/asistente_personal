@@ -1,8 +1,59 @@
 from django.conf import settings
 from django.contrib.auth import logout
+from django.contrib.auth import get_user_model
 from django.http import JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
+
+from .models import PerfilAsistente
+
+
+DESKTOP_HEADER_VALUE = 'ventana-flotante'
+
+
+def _es_loopback(request):
+    return request.META.get('REMOTE_ADDR') in {'127.0.0.1', '::1'}
+
+
+def _usuario_para_ventana_local():
+    username = getattr(settings, 'DESKTOP_API_USERNAME', '')
+    usuarios = get_user_model().objects.filter(is_active=True)
+    if username:
+        return usuarios.filter(username=username).first()
+
+    perfiles = PerfilAsistente.objects.select_related('usuario').filter(
+        usuario__isnull=False,
+        usuario__is_active=True,
+    )
+    if perfiles.count() == 1:
+        return perfiles.first().usuario
+
+    if usuarios.count() == 1:
+        return usuarios.first()
+
+    return None
+
+
+def autenticar_ventana_local(request):
+    """Permite a la ventana Pygame usar la API local sin cookie de navegador."""
+    if request.user.is_authenticated:
+        return True
+
+    if not request.path.startswith('/api/'):
+        return False
+
+    if request.META.get('HTTP_X_ASISTENTE_DESKTOP') != DESKTOP_HEADER_VALUE:
+        return False
+
+    if not _es_loopback(request):
+        return False
+
+    usuario = _usuario_para_ventana_local()
+    if not usuario:
+        return False
+
+    request.user = usuario
+    return True
 
 
 class AuthRequiredMiddleware:
@@ -19,12 +70,15 @@ class AuthRequiredMiddleware:
             login_url,
             logout_url,
             '/webhook/whatsapp/',
+            '/webhook/facebook/',
             settings.STATIC_URL,
             settings.MEDIA_URL,
         )
 
         if path.startswith(public_paths):
             return self.get_response(request)
+
+        autenticar_ventana_local(request)
 
         if request.user.is_authenticated and not request.user.is_active:
             logout(request)

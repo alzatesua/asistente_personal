@@ -1,6 +1,7 @@
 import json
 import os
 import hashlib
+import hmac
 import subprocess
 import time
 import threading
@@ -12,7 +13,7 @@ import re
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from django.shortcuts import render, redirect
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -39,6 +40,13 @@ WHATSAPP_LINE_DEFAULTS = {
     'leer_chats': True,
     'leer_grupos': True,
     'responder_voz': False,
+}
+FACEBOOK_CONFIG_DEFAULTS = {
+    'auto_mensajes': True,
+    'auto_comentarios': False,
+    'leer_mensajes': False,
+    'leer_comentarios': False,
+    'responder_comentarios_publicamente': True,
 }
 
 
@@ -299,6 +307,149 @@ def baileys_sessions_root():
 
 def linea_tiene_sesion_baileys(linea):
     return (baileys_auth_folder(linea) / 'creds.json').exists()
+
+
+def facebook_config_path():
+    return settings.BASE_DIR / 'facebook_page_settings.json'
+
+
+def cargar_config_facebook():
+    ruta = facebook_config_path()
+    if not ruta.exists():
+        return {}
+    try:
+        with open(ruta, 'r', encoding='utf-8') as archivo:
+            data = json.load(archivo)
+            return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        print(f"[Facebook Config] No pude leer configuracion: {exc}")
+        return {}
+
+
+def guardar_config_facebook(config):
+    ruta = facebook_config_path()
+    with open(ruta, 'w', encoding='utf-8') as archivo:
+        json.dump(config, archivo, ensure_ascii=False, indent=2)
+
+
+def facebook_key_perfil(perfil):
+    return f"u{perfil.id}" if perfil and perfil.id else "default"
+
+
+def obtener_config_facebook(perfil):
+    config = cargar_config_facebook()
+    datos = config.get(facebook_key_perfil(perfil), {})
+    return {
+        'auto_mensajes': bool(datos.get('auto_mensajes', FACEBOOK_CONFIG_DEFAULTS['auto_mensajes'])),
+        'auto_comentarios': bool(datos.get('auto_comentarios', FACEBOOK_CONFIG_DEFAULTS['auto_comentarios'])),
+        'leer_mensajes': bool(datos.get('leer_mensajes', FACEBOOK_CONFIG_DEFAULTS['leer_mensajes'])),
+        'leer_comentarios': bool(datos.get('leer_comentarios', FACEBOOK_CONFIG_DEFAULTS['leer_comentarios'])),
+        'responder_comentarios_publicamente': bool(datos.get(
+            'responder_comentarios_publicamente',
+            FACEBOOK_CONFIG_DEFAULTS['responder_comentarios_publicamente'],
+        )),
+    }
+
+
+def perfil_facebook_destino():
+    return None
+
+
+def perfil_facebook_por_page_id(page_id):
+    page_id = (page_id or '').strip()
+    if page_id:
+        perfil = PerfilAsistente.objects.filter(meta_page_id=page_id, usuario__isnull=False).first()
+        if perfil:
+            return perfil
+        conv = Conversacion.objects.filter(numero_whatsapp__startswith=f'facebook:{page_id}:').select_related('perfil').first()
+        if conv:
+            return conv.perfil
+    return None
+
+
+def perfil_facebook_por_verify_token(token):
+    token = (token or '').strip()
+    if not token:
+        return None
+    return PerfilAsistente.objects.filter(meta_verify_token=token, usuario__isnull=False).first()
+
+
+def perfiles_facebook_configurados():
+    return PerfilAsistente.objects.filter(
+        usuario__isnull=False,
+        meta_page_id__gt='',
+        meta_page_access_token__gt='',
+    )
+
+
+def meta_graph_url(perfil, path):
+    version = ((getattr(perfil, 'meta_graph_api_version', '') or 'v25.0')).strip().lstrip('/')
+    path = str(path or '').strip().lstrip('/')
+    return f"https://graph.facebook.com/{version}/{path}"
+
+
+def meta_page_token(perfil):
+    return (getattr(perfil, 'meta_page_access_token', '') or '').strip()
+
+
+def verificar_firma_meta(request, perfil):
+    app_secret = (getattr(perfil, 'meta_app_secret', '') or '').strip()
+    if not app_secret:
+        return True
+    firma = request.headers.get('X-Hub-Signature-256', '')
+    if not firma.startswith('sha256='):
+        return False
+    digest = hmac.new(app_secret.encode('utf-8'), request.body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(firma, f'sha256={digest}')
+
+
+def enviar_mensaje_facebook(perfil, psid, texto):
+    token = meta_page_token(perfil)
+    if not token:
+        return False, {'error': 'Falta META_PAGE_ACCESS_TOKEN'}
+    response = requests.post(
+        meta_graph_url(perfil, 'me/messages'),
+        params={'access_token': token},
+        json={'recipient': {'id': psid}, 'message': {'text': texto}},
+        timeout=15,
+    )
+    payload = respuesta_json_o_texto(response) if response.content else {}
+    return response.status_code < 400, payload
+
+
+def responder_comentario_facebook(perfil, comment_id, texto):
+    token = meta_page_token(perfil)
+    if not token:
+        return False, {'error': 'Falta META_PAGE_ACCESS_TOKEN'}
+    response = requests.post(
+        meta_graph_url(perfil, f'{comment_id}/comments'),
+        params={'access_token': token, 'message': texto},
+        timeout=15,
+    )
+    payload = respuesta_json_o_texto(response) if response.content else {}
+    return response.status_code < 400, payload
+
+
+def conversacion_facebook(perfil, page_id, tipo, externo_id, nombre=''):
+    page_id = (page_id or getattr(perfil, 'meta_page_id', '') or 'page').strip()
+    externo_id = (externo_id or 'desconocido').strip()
+    numero = f"facebook:{page_id}:{tipo}:{externo_id}"[:80]
+    conversacion, _ = Conversacion.objects.get_or_create(
+        perfil=perfil,
+        numero_whatsapp=numero,
+        defaults={'nombre_contacto': nombre or ('Comentario Facebook' if tipo == 'comment' else 'Messenger')},
+    )
+    if nombre and conversacion.nombre_contacto != nombre:
+        conversacion.nombre_contacto = nombre
+        conversacion.save(update_fields=['nombre_contacto'])
+    return conversacion
+
+
+def datos_destino_facebook(conversacion):
+    partes = (conversacion.numero_whatsapp or '').split(':', 3)
+    if len(partes) == 4 and partes[0] == 'facebook':
+        return {'page_id': partes[1], 'tipo': partes[2], 'externo_id': partes[3]}
+    return {'page_id': '', 'tipo': '', 'externo_id': ''}
 
 
 def listar_lineas_whatsapp_guardadas(perfil=None):
@@ -954,6 +1105,11 @@ def whatsapp_page(request):
     return render(request, 'asistente/whatsapp.html', {'perfil': perfil})
 
 
+def facebook_page(request):
+    perfil = obtener_perfil_usuario(request)
+    return render(request, 'asistente/facebook.html', {'perfil': perfil})
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def whatsapp_conectar_linea(request):
@@ -1442,6 +1598,126 @@ def whatsapp_programar_masivo(request):
     })
 
 
+@require_http_methods(["GET"])
+def facebook_config(request):
+    perfil = obtener_perfil_usuario(request)
+    page_id = (getattr(perfil, 'meta_page_id', '') or '').strip()
+    page_token = meta_page_token(perfil)
+    app_secret = (getattr(perfil, 'meta_app_secret', '') or '').strip()
+    verify_token = (getattr(perfil, 'meta_verify_token', '') or '').strip()
+    webhook_url = (getattr(perfil, 'meta_webhook_url', '') or request.build_absolute_uri('/webhook/facebook/')).strip()
+    return JsonResponse({
+        'ok': True,
+        'page_id': page_id,
+        'graph_version': getattr(perfil, 'meta_graph_api_version', 'v25.0') or 'v25.0',
+        'webhook_url': webhook_url,
+        'config': obtener_config_facebook(perfil),
+        'credenciales': {
+            'page_id': bool(page_id),
+            'page_access_token': bool(page_token),
+            'app_secret': bool(app_secret),
+            'verify_token': bool(verify_token),
+        },
+        'permisos_sugeridos': [
+            'pages_messaging',
+            'pages_manage_metadata',
+            'pages_read_engagement',
+            'pages_manage_engagement',
+        ],
+    })
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def facebook_configuracion(request):
+    perfil = obtener_perfil_usuario(request)
+    if request.method == 'GET':
+        return JsonResponse({'config': obtener_config_facebook(perfil)})
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON invalido'}, status=400)
+    config = cargar_config_facebook()
+    actual = obtener_config_facebook(perfil)
+    for campo in FACEBOOK_CONFIG_DEFAULTS:
+        if campo in data:
+            actual[campo] = bool(data[campo])
+    config[facebook_key_perfil(perfil)] = actual
+    guardar_config_facebook(config)
+    return JsonResponse({'ok': True, 'config': actual})
+
+
+def facebook_mensajes(request):
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'mensajes': []})
+    tipo = request.GET.get('tipo', 'todos')
+    conversaciones = Conversacion.objects.filter(perfil=perfil, numero_whatsapp__startswith='facebook:')
+    if tipo in ('message', 'comment'):
+        conversaciones = conversaciones.filter(numero_whatsapp__contains=f':{tipo}:')
+    mensajes = Mensaje.objects.filter(conversacion__in=conversaciones, origen='entrante').order_by('-creado_en')[:60]
+    return JsonResponse({'mensajes': [serializar_mensaje_whatsapp(m) for m in mensajes]})
+
+
+def facebook_conversacion_detalle(request, conversacion_id):
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+    try:
+        conversacion = Conversacion.objects.get(id=conversacion_id, perfil=perfil, numero_whatsapp__startswith='facebook:')
+    except Conversacion.DoesNotExist:
+        return JsonResponse({'error': 'Conversacion no encontrada'}, status=404)
+    destino = datos_destino_facebook(conversacion)
+    mensajes = reversed(list(conversacion.mensajes.order_by('-creado_en')[:80]))
+    return JsonResponse({
+        'conversacion': {'id': conversacion.id, 'contacto': conversacion.nombre_contacto, 'numero': conversacion.numero_whatsapp, **destino},
+        'mensajes': [serializar_mensaje_whatsapp(m) for m in mensajes],
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def facebook_conversacion_enviar(request, conversacion_id):
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+    try:
+        conversacion = Conversacion.objects.get(id=conversacion_id, perfil=perfil, numero_whatsapp__startswith='facebook:')
+    except Conversacion.DoesNotExist:
+        return JsonResponse({'error': 'Conversacion no encontrada'}, status=404)
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        data = {}
+    mensaje = (data.get('mensaje') or '').strip()
+    if not mensaje:
+        return JsonResponse({'error': 'Escribe un mensaje para enviar'}, status=400)
+    destino = datos_destino_facebook(conversacion)
+    if destino['tipo'] == 'message':
+        ok, payload = enviar_mensaje_facebook(perfil, destino['externo_id'], mensaje)
+    elif destino['tipo'] == 'comment':
+        ok, payload = responder_comentario_facebook(perfil, destino['externo_id'], mensaje)
+    else:
+        return JsonResponse({'error': 'Destino Facebook no soportado'}, status=400)
+    if not ok:
+        return JsonResponse({'error': payload.get('error') or 'Meta no acepto el envio', 'detalle': payload}, status=502)
+    msg = Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='saliente', contenido=mensaje, respondido=True)
+    return JsonResponse({'ok': True, 'mensaje': serializar_mensaje_whatsapp(msg), 'meta': payload})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def facebook_borrar_memoria(request):
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+    conversaciones = Conversacion.objects.filter(perfil=perfil, numero_whatsapp__startswith='facebook:')
+    total_conversaciones = conversaciones.count()
+    total_mensajes = Mensaje.objects.filter(conversacion__in=conversaciones).count()
+    conversaciones.delete()
+    return JsonResponse({'ok': True, 'conversaciones_eliminadas': total_conversaciones, 'mensajes_eliminados': total_mensajes})
+
+
 def voz_page(request):
     perfil = obtener_perfil_usuario(request)
     return render(request, 'asistente/voz.html', {'perfil': perfil})
@@ -1457,6 +1733,12 @@ def configurar_perfil(request):
         perfil, _ = obtener_perfil_usuario(request), False
         perfil.nombre_usuario = nombre_usuario
         perfil.nombre_asistente = nombre_asistente
+        perfil.meta_graph_api_version = (request.POST.get('meta_graph_api_version') or 'v25.0').strip() or 'v25.0'
+        perfil.meta_page_id = (request.POST.get('meta_page_id') or '').strip()
+        perfil.meta_page_access_token = (request.POST.get('meta_page_access_token') or '').strip()
+        perfil.meta_app_secret = (request.POST.get('meta_app_secret') or '').strip()
+        perfil.meta_verify_token = (request.POST.get('meta_verify_token') or '').strip()
+        perfil.meta_webhook_url = (request.POST.get('meta_webhook_url') or '').strip()
 
         if cv_archivo:
             perfil.cv_archivo = cv_archivo
@@ -1553,6 +1835,104 @@ def usuarios_page(request):
 
     usuarios = User.objects.select_related('perfil_asistente').order_by('-is_active', 'username')
     return render(request, 'asistente/usuarios.html', {'usuarios': usuarios})
+
+
+# ─── WEBHOOK FACEBOOK / META ─────────────────────────────────
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def webhook_facebook(request):
+    if request.method == 'GET':
+        mode = request.GET.get('hub.mode')
+        token = request.GET.get('hub.verify_token')
+        challenge = request.GET.get('hub.challenge', '')
+        perfil = perfil_facebook_por_verify_token(token)
+        if mode == 'subscribe' and perfil:
+            return HttpResponse(challenge, content_type='text/plain')
+        return JsonResponse({'error': 'Verificacion fallida'}, status=403)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON invalido'}, status=400)
+
+    page_ids = [str(entry.get('id') or '') for entry in data.get('entry', []) if entry.get('id')]
+    perfiles = [perfil_facebook_por_page_id(page_id) for page_id in page_ids]
+    perfiles = [perfil for perfil in perfiles if perfil]
+    if not perfiles:
+        return JsonResponse({'error': 'Perfil Facebook no configurado'}, status=400)
+    if not any(verificar_firma_meta(request, perfil) for perfil in perfiles):
+        return JsonResponse({'error': 'Firma Meta invalida'}, status=401)
+
+    eventos = []
+    for entry in data.get('entry', []):
+        page_id = str(entry.get('id') or '')
+        perfil = perfil_facebook_por_page_id(page_id)
+        if not perfil:
+            continue
+        conf = obtener_config_facebook(perfil)
+
+        for messaging in entry.get('messaging', []):
+            sender_id = str((messaging.get('sender') or {}).get('id') or '')
+            recipient_id = str((messaging.get('recipient') or {}).get('id') or page_id)
+            if not sender_id or sender_id == recipient_id or 'message' not in messaging:
+                continue
+            contenido = ((messaging.get('message') or {}).get('text') or '[Mensaje sin texto]').strip()
+            conversacion = conversacion_facebook(perfil, recipient_id, 'message', sender_id, f'Messenger {sender_id}')
+            msg = Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='entrante', contenido=contenido)
+            evento = {'tipo': 'message', 'mensaje_id': msg.id}
+            eventos.append(evento)
+            if conf['leer_mensajes']:
+                anunciar_mensaje_whatsapp(perfil.id, conversacion.nombre_contacto, sender_id, contenido, 'texto')
+            if conf['auto_mensajes']:
+                historial = construir_historial(conversacion, limite=20)[:-1]
+                respuesta = GLMService().chat(
+                    contenido,
+                    perfil,
+                    historial,
+                    canal='facebook',
+                    contacto={'nombre': conversacion.nombre_contacto, 'numero': sender_id, 'linea': 'Messenger', 'linea_numero': recipient_id},
+                )
+                respuesta = limpiar_respuesta_whatsapp(respuesta, perfil)
+                ok, payload = enviar_mensaje_facebook(perfil, sender_id, respuesta)
+                Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='saliente', contenido=respuesta, respondido=ok)
+                evento['auto_respuesta'] = ok
+                if not ok:
+                    evento['error'] = payload
+
+        for change in entry.get('changes', []):
+            if change.get('field') not in ('feed', 'comments'):
+                continue
+            value = change.get('value') or {}
+            item = value.get('item')
+            verb = value.get('verb')
+            comment_id = str(value.get('comment_id') or value.get('id') or '')
+            if item != 'comment' or verb not in ('add', 'edited') or not comment_id:
+                continue
+            contenido = (value.get('message') or '[Comentario sin texto]').strip()
+            autor = (value.get('from') or {}).get('name') or f'Comentario {comment_id}'
+            conversacion = conversacion_facebook(perfil, page_id, 'comment', comment_id, autor)
+            msg = Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='entrante', contenido=contenido)
+            evento = {'tipo': 'comment', 'mensaje_id': msg.id}
+            eventos.append(evento)
+            if conf['leer_comentarios']:
+                anunciar_mensaje_whatsapp(perfil.id, autor, comment_id, contenido, 'texto')
+            if conf['auto_comentarios'] and conf['responder_comentarios_publicamente']:
+                historial = construir_historial(conversacion, limite=20)[:-1]
+                respuesta = GLMService().chat(
+                    contenido,
+                    perfil,
+                    historial,
+                    canal='facebook',
+                    contacto={'nombre': autor, 'numero': comment_id, 'linea': 'Comentarios', 'linea_numero': page_id},
+                )
+                respuesta = limpiar_respuesta_whatsapp(respuesta, perfil)
+                ok, payload = responder_comentario_facebook(perfil, comment_id, respuesta)
+                Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='saliente', contenido=respuesta, respondido=ok)
+                evento['auto_respuesta'] = ok
+                if not ok:
+                    evento['error'] = payload
+
+    return JsonResponse({'ok': True, 'eventos': eventos})
 
 
 # ─── WEBHOOK BAILEYS ─────────────────────────────────────────
