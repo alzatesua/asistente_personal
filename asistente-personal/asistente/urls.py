@@ -2,6 +2,9 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path('login/audio-aviso-pago/', views.login_aviso_pago_audio, name='login_aviso_pago_audio'),
+    path('login/', views.login_usuario, name='login'),
+    path('logout/', views.logout_usuario, name='logout'),
     path('', views.dashboard, name='dashboard'),
     path('chat/', views.chat_page, name='chat_page'),
     path('tareas/', views.tareas_page, name='tareas_page'),
@@ -19,9 +22,13 @@ urlpatterns = [
     path('api/whatsapp/config-lineas/', views.whatsapp_config_lineas, name='whatsapp_config_lineas'),
     path('api/whatsapp/borrar-sesion/', views.whatsapp_borrar_sesion, name='whatsapp_borrar_sesion'),
     path('api/whatsapp/eliminar-linea/', views.whatsapp_eliminar_linea, name='whatsapp_eliminar_linea'),
+    path('api/whatsapp/programar-masivo/', views.whatsapp_programar_masivo, name='whatsapp_programar_masivo'),
     path('api/chat/', views.chat_directo, name='chat_directo'),
     path('api/chat/historial/', views.chat_historial, name='chat_historial'),
     path('api/mensajes/', views.mensajes_recientes, name='mensajes_recientes'),
+    path('api/whatsapp/conversacion/<int:conversacion_id>/', views.whatsapp_conversacion_detalle, name='whatsapp_conversacion_detalle'),
+    path('api/whatsapp/conversacion/<int:conversacion_id>/enviar/', views.whatsapp_conversacion_enviar, name='whatsapp_conversacion_enviar'),
+    path('api/whatsapp/mensaje/<int:mensaje_id>/', views.whatsapp_mensaje_detalle, name='whatsapp_mensaje_detalle'),
     path('api/whatsapp/estadisticas/', views.whatsapp_estadisticas, name='whatsapp_estadisticas'),
     path('api/voces/', views.voces_disponibles, name='voces_disponibles'),
     path('api/voz/actualizar/', views.actualizar_voz, name='actualizar_voz'),

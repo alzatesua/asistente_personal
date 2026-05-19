@@ -2,33 +2,60 @@
 {% block title %}WhatsApp - Asistente{% endblock %}
 {% block content %}
 <style>
-    body { background: linear-gradient(135deg, #020617, #08111f 48%, #030712); color: #e5e7eb; }
-    nav { background: rgba(2, 6, 23, 0.84) !important; border-color: rgba(148, 163, 184, 0.12) !important; }
-    .page { width: min(1040px, calc(100vw - 32px)); margin: 0 auto; text-align: left; }
-    .grid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 16px; }
-    .card { background: rgba(15,23,42,.78); border: 1px solid rgba(148,163,184,.13); border-radius: 18px; box-shadow: 0 18px 45px rgba(0,0,0,.24); }
-    .muted { color: #94a3b8; }
-    .line-panel { border: 1px solid rgba(148,163,184,.14); background: rgba(15,23,42,.72); border-radius: 14px; padding: 14px; }
-    .line-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-    .line-title { font-size: 16px; font-weight: 700; color: #f8fafc; }
-    .icon-trash { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid rgba(248,113,113,.32); background: rgba(127,29,29,.2); color: #fecaca; font-size: 15px; transition: background .12s ease, border-color .12s ease, transform .12s ease; }
+    body { background: #070b13; color: #e5e7eb; }
+    body::before { content: ''; position: fixed; inset: 0; z-index: -1; background:
+        linear-gradient(135deg, rgba(20, 184, 166, .08), transparent 34%),
+        linear-gradient(215deg, rgba(59, 130, 246, .08), transparent 38%),
+        linear-gradient(135deg, #07111d 0%, #080b15 48%, #0c111d 100%);
+    }
+    nav { background: rgba(7, 11, 19, 0.82) !important; border-color: rgba(148, 163, 184, 0.12) !important; }
+    main { padding-top: 22px !important; }
+    .page { width: min(1680px, calc(100vw - 28px)); margin: 0 auto; text-align: left; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin-bottom: 18px; }
+    .hero-kicker { color: #7dd3fc; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .hero-title { font-size: clamp(30px, 4vw, 48px); line-height: 1; font-weight: 800; color: #f8fafc; margin-top: 6px; letter-spacing: 0; }
+    .hero-copy { color: #9fb0c7; margin-top: 10px; max-width: 640px; }
+    .stats { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; min-width: min(420px, 100%); }
+    .stat-card { background: rgba(15, 23, 42, .66); border: 1px solid rgba(148, 163, 184, .14); border-radius: 14px; padding: 14px; }
+    .stat-label { color: #8fa3bd; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+    .stat-value { display: flex; align-items: center; gap: 8px; color: #f8fafc; font-size: 22px; font-weight: 800; margin-top: 4px; }
+    .grid { display: grid; grid-template-columns: minmax(320px, .85fr) minmax(430px, 1.28fr) minmax(360px, .95fr); gap: 18px; align-items: start; }
+    .left-stack, .middle-stack, .right-stack { display: grid; gap: 18px; }
+    .card { background: rgba(15,23,42,.76); border: 1px solid rgba(148,163,184,.14); border-radius: 18px; box-shadow: 0 22px 60px rgba(0,0,0,.28); backdrop-filter: blur(18px); }
+    .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    .panel-title { color: #f8fafc; font-weight: 800; font-size: 17px; }
+    .muted { color: #9fb0c7; }
+    .quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .line-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-bottom: 12px; }
+    .line-panel { border: 1px solid rgba(148,163,184,.14); background: linear-gradient(180deg, rgba(30,41,59,.8), rgba(15,23,42,.78)); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,.03); overflow: hidden; }
+    .line-panel[open] { border-color: rgba(45,212,191,.24); }
+    .line-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; list-style: none; }
+    .line-summary::-webkit-details-marker { display: none; }
+    .line-body { padding: 0 14px 14px; }
+    .line-avatar { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: rgba(20,184,166,.14); color: #99f6e4; border: 1px solid rgba(45,212,191,.22); font-weight: 800; text-transform: uppercase; }
+    .line-title { font-size: 17px; font-weight: 800; color: #f8fafc; }
+    .line-meta { font-size: 12px; color: #8fa3bd; margin-top: 2px; }
+    .expand-label { color: #9fb0c7; font-size: 12px; font-weight: 750; border: 1px solid rgba(148,163,184,.16); border-radius: 999px; padding: 5px 9px; background: rgba(15,23,42,.56); }
+    .line-panel[open] .expand-label { color: #99f6e4; border-color: rgba(45,212,191,.24); }
+    .icon-trash { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 11px; border: 1px solid rgba(248,113,113,.3); background: rgba(127,29,29,.22); color: #fecaca; font-size: 18px; line-height: 1; transition: background .12s ease, border-color .12s ease, transform .12s ease; }
+    .icon-trash::before { content: 'x'; transform: translateY(-1px); }
     .icon-trash:hover { background: rgba(185,28,28,.38); border-color: rgba(248,113,113,.55); transform: translateY(-1px); }
     .icon-trash:disabled { opacity: .7; cursor: wait; transform: none; }
-    .line-section { border-top: 1px solid rgba(148,163,184,.12); padding-top: 12px; margin-top: 12px; }
+    .line-section { border-top: 1px solid rgba(148,163,184,.12); padding-top: 11px; margin-top: 11px; }
     .line-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; margin-bottom: 8px; }
     .control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .read-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .secondary-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
-    .btn-line { min-height: 38px; border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 650; transition: transform .12s ease, background .12s ease, border-color .12s ease; border: 1px solid transparent; }
+    .btn-line { min-height: 40px; border-radius: 11px; padding: 8px 10px; font-size: 13px; font-weight: 750; transition: transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease; border: 1px solid transparent; }
     .btn-line:hover { transform: translateY(-1px); }
     .btn-line:disabled { opacity: .72; cursor: wait; transform: none; }
     .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 999px; display: inline-block; animation: spin .75s linear infinite; vertical-align: -2px; margin-right: 6px; }
     .line-loading { display: flex; align-items: center; gap: 8px; min-height: 34px; border: 1px solid rgba(250,204,21,.2); background: rgba(250,204,21,.08); color: #fde68a; border-radius: 10px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; }
     .line-loading.hidden { display: none !important; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .btn-primary { background: #16a34a; color: #fff; }
-    .btn-primary:hover { background: #22c55e; }
+    .btn-primary { background: linear-gradient(135deg, #059669, #16a34a); color: #fff; box-shadow: 0 10px 24px rgba(22,163,74,.15); }
+    .btn-primary:hover { background: linear-gradient(135deg, #10b981, #22c55e); }
     .btn-neutral { background: rgba(51,65,85,.95); color: #e2e8f0; border-color: rgba(148,163,184,.12); }
     .btn-neutral:hover { background: rgba(71,85,105,.95); }
     .btn-warning { background: rgba(217,119,6,.95); color: #fff; }
@@ -41,41 +68,190 @@
     .btn-toggle-on:hover { background: rgba(22,163,74,.28); }
     .btn-toggle-off { background: rgba(185,28,28,.16); color: #fca5a5; border-color: rgba(248,113,113,.3); }
     .btn-toggle-off:hover { background: rgba(185,28,28,.25); }
-    .line-input { background: rgba(15,23,42,.95); border: 1px solid rgba(148,163,184,.2); border-radius: 10px; color: #fff; outline: none; }
-    @media (max-width: 520px) { .control-grid, .read-grid, .action-grid, .secondary-actions { grid-template-columns: 1fr; } }
-    @media (max-width: 850px) { .grid { grid-template-columns: 1fr; } }
+    .line-input { background: rgba(7,12,22,.9); border: 1px solid rgba(148,163,184,.2); border-radius: 11px; color: #fff; outline: none; }
+    .line-input:focus { border-color: rgba(45,212,191,.48); box-shadow: 0 0 0 3px rgba(20,184,166,.12); }
+    .messages-list { display: grid; gap: 10px; max-height: calc(100vh - 245px); overflow: auto; padding-right: 4px; }
+    .conversation-card { border: 1px solid rgba(148,163,184,.1); background: rgba(30,41,59,.72); border-radius: 14px; transition: border-color .12s ease, background .12s ease, transform .12s ease; overflow: hidden; }
+    .conversation-card[open] { border-color: rgba(45,212,191,.28); background: rgba(24,35,52,.94); }
+    .conversation-summary { display: block; padding: 13px 14px; cursor: pointer; list-style: none; }
+    .conversation-summary::-webkit-details-marker { display: none; }
+    .conversation-card:hover { border-color: rgba(45,212,191,.24); transform: translateY(-1px); }
+    .message-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; margin-bottom: 6px; }
+    .message-name { color: #f8fafc; font-weight: 800; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .message-kind { color: #bae6fd; background: rgba(14,165,233,.12); border: 1px solid rgba(56,189,248,.18); border-radius: 999px; padding: 3px 8px; font-size: 11px; font-weight: 750; }
+    .message-text { color: #b6c7dd; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .message-time { color: #61738d; font-size: 12px; margin-top: 6px; }
+    .chat-panel { border-top: 1px solid rgba(148,163,184,.11); padding: 12px; }
+    .chat-thread { display: grid; gap: 9px; max-height: 340px; overflow: auto; padding-right: 3px; }
+    .chat-bubble { width: min(82%, 560px); border: 1px solid rgba(148,163,184,.12); border-radius: 14px; padding: 10px 11px; }
+    .chat-bubble.incoming { justify-self: start; background: rgba(15,23,42,.86); color: #d6e3f3; }
+    .chat-bubble.outgoing { justify-self: end; background: rgba(5,150,105,.14); border-color: rgba(45,212,191,.24); color: #d9fff7; }
+    .chat-meta { color: #7f92ad; font-size: 11px; font-weight: 750; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+    .chat-text { white-space: pre-wrap; line-height: 1.45; }
+    .chat-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 8px; }
+    .chat-mini-btn { border: 1px solid rgba(148,163,184,.16); background: rgba(15,23,42,.72); color: #cbd5e1; border-radius: 9px; padding: 5px 8px; font-size: 12px; font-weight: 750; }
+    .chat-mini-btn.danger { color: #fecaca; border-color: rgba(248,113,113,.26); background: rgba(127,29,29,.2); }
+    .chat-edit { width: 100%; min-height: 86px; resize: vertical; margin-top: 6px; background: rgba(7,12,22,.92); border: 1px solid rgba(45,212,191,.25); border-radius: 10px; color: #e5e7eb; padding: 9px; outline: none; }
+    .chat-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; }
+    .chat-compose textarea { min-height: 44px; max-height: 140px; resize: vertical; background: rgba(7,12,22,.92); border: 1px solid rgba(148,163,184,.18); border-radius: 11px; color: #e5e7eb; padding: 10px; outline: none; }
+    .chat-compose textarea:focus { border-color: rgba(45,212,191,.48); box-shadow: 0 0 0 3px rgba(20,184,166,.12); }
+    .bulk-form { display: grid; gap: 12px; }
+    .bulk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .bulk-field { display: grid; gap: 6px; }
+    .bulk-field.full { grid-column: 1 / -1; }
+    .bulk-label { color: #8fa3bd; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+    .bulk-input, .bulk-select, .bulk-textarea { width: 100%; background: rgba(7,12,22,.9); border: 1px solid rgba(148,163,184,.2); border-radius: 11px; color: #f8fafc; padding: 10px 11px; outline: none; }
+    .bulk-textarea { min-height: 86px; resize: vertical; }
+    .bulk-input:focus, .bulk-select:focus, .bulk-textarea:focus { border-color: rgba(45,212,191,.48); box-shadow: 0 0 0 3px rgba(20,184,166,.12); }
+    .segmented { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .segment { border: 1px solid rgba(148,163,184,.18); background: rgba(15,23,42,.72); color: #cbd5e1; border-radius: 11px; padding: 9px; font-size: 13px; font-weight: 800; }
+    .segment.active { background: rgba(20,184,166,.18); border-color: rgba(45,212,191,.34); color: #99f6e4; }
+    .campaign-list { display: grid; gap: 8px; margin-top: 12px; }
+    .campaign-item { border: 1px solid rgba(148,163,184,.12); background: rgba(30,41,59,.58); border-radius: 12px; padding: 10px; }
+    .campaign-meta { color: #7f92ad; font-size: 12px; margin-top: 3px; }
+    .progress-wrap { margin-top: 9px; }
+    .progress-bar { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(15,23,42,.9); border: 1px solid rgba(148,163,184,.12); }
+    .progress-fill { height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #14b8a6, #22c55e); transition: width .2s ease; }
+    .progress-text { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #8fa3bd; font-size: 12px; margin-top: 5px; }
+    .bulk-feedback { min-height: 20px; font-size: 13px; color: #9fb0c7; }
+    .campaign-cta { border: 1px dashed rgba(45,212,191,.28); background: rgba(20,184,166,.08); border-radius: 14px; padding: 14px; }
+    .modal-overlay { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; padding: 22px; background: rgba(2,6,23,.78); backdrop-filter: blur(12px); }
+    .modal-overlay.active { display: flex; }
+    .modal-panel { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 44px); overflow: auto; background: rgba(15,23,42,.96); border: 1px solid rgba(148,163,184,.18); border-radius: 18px; box-shadow: 0 28px 90px rgba(0,0,0,.5); padding: 18px; }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+    .modal-close { width: 38px; height: 38px; border-radius: 12px; border: 1px solid rgba(148,163,184,.18); background: rgba(15,23,42,.82); color: #cbd5e1; font-size: 18px; font-weight: 800; }
+    .empty-state { border: 1px dashed rgba(148,163,184,.2); border-radius: 14px; padding: 24px; text-align: center; color: #8fa3bd; background: rgba(15,23,42,.45); }
+    @media (max-width: 1280px) { .grid { grid-template-columns: minmax(340px, .9fr) minmax(0, 1.1fr); } .right-stack { grid-column: 1 / -1; } }
+    @media (max-width: 980px) { .hero, .grid { grid-template-columns: 1fr; } .stats { min-width: 0; } .messages-list { max-height: none; } .right-stack { grid-column: auto; } }
+    @media (max-width: 560px) { .page { width: min(100%, calc(100vw - 24px)); } .control-grid, .read-grid, .action-grid, .secondary-actions, .quick-actions, .line-form, .stats, .bulk-grid { grid-template-columns: 1fr; } .line-summary { grid-template-columns: auto minmax(0, 1fr) auto auto; } .expand-label { display: none; } .bulk-field.full { grid-column: auto; } }
 </style>
 
 <div class="page">
-    <div class="mb-5">
-        <p class="muted text-sm">Conexion y mensajes</p>
-        <h1 class="text-3xl font-bold text-white">WhatsApp</h1>
+    <div class="hero">
+        <div>
+            <p class="hero-kicker">Conexion y mensajes</p>
+            <h1 class="hero-title">WhatsApp</h1>
+            <p class="hero-copy">Administra líneas, automatizaciones, lectura por voz y actividad reciente desde un panel más claro.</p>
+        </div>
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">Líneas</div>
+                <div class="stat-value" id="wa-status-badge">Checking...</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Mensajes</div>
+                <div class="stat-value"><span id="badge-mensajes" class="hidden">0</span><span id="badge-mensajes-empty">0</span></div>
+            </div>
+        </div>
     </div>
 
     <div class="grid">
-        <section class="card p-5">
-            <h2 class="font-bold text-white mb-4 flex items-center gap-2">
-                Líneas WhatsApp
-                <span id="wa-status-badge" class="ml-auto text-xs px-2 py-1 rounded-full bg-slate-500/30 text-slate-400">Checking...</span>
-            </h2>
-            <div class="flex gap-2 mb-4">
-                <input id="nueva-linea" class="line-input flex-1 px-3 py-2 text-sm" placeholder="ventas, soporte, principal">
-                <button onclick="agregarLinea()" class="px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 transition">Agregar</button>
-            </div>
-            <button id="start-all" onclick="iniciarTodoWhatsApp()" class="w-full mb-3 py-2 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-500 transition">Iniciar todo</button>
-            <button onclick="borrarMemoriaWhatsApp()" class="w-full mb-4 py-2 rounded-lg text-sm font-medium bg-red-600/80 hover:bg-red-500 transition">Borrar memoria WhatsApp</button>
-            <div id="wa-lines" class="space-y-3"></div>
-        </section>
+        <div class="left-stack">
+            <section class="card p-5">
+                <div class="panel-heading">
+                    <h2 class="panel-title">Líneas WhatsApp</h2>
+                </div>
+                <div class="line-form">
+                    <input id="nueva-linea" class="line-input flex-1 px-3 py-2 text-sm" placeholder="ventas, soporte, principal">
+                    <button onclick="agregarLinea()" class="btn-line btn-neutral">Agregar</button>
+                </div>
+                <div class="quick-actions">
+                    <button id="start-all" onclick="iniciarTodoWhatsApp()" class="btn-line btn-primary">Iniciar todo</button>
+                    <button onclick="borrarMemoriaWhatsApp()" class="btn-line btn-danger">Borrar memoria</button>
+                </div>
+                <div id="wa-lines" class="space-y-3"></div>
+            </section>
 
-        <section class="card p-5">
-            <h2 class="font-bold text-white mb-4 flex items-center gap-2">
-                Mensajes recientes
-                <span id="badge-mensajes" class="ml-auto bg-blue-500 text-xs px-2 py-1 rounded-full hidden">0</span>
-            </h2>
-            <div id="lista-mensajes" class="space-y-2 text-sm muted">
-                <p class="py-4">Cargando mensajes...</p>
+        </div>
+
+        <div class="middle-stack">
+            <section class="card p-5">
+                <div class="panel-heading">
+                    <h2 class="panel-title">Mensajes recientes</h2>
+                </div>
+                <div id="lista-mensajes" class="messages-list text-sm muted">
+                    <p class="empty-state">Cargando mensajes...</p>
+                </div>
+            </section>
+        </div>
+
+        <div class="right-stack">
+            <section class="card p-5">
+                <div class="panel-heading">
+                    <h2 class="panel-title">Programar envíos</h2>
+                </div>
+                <div class="bulk-form">
+                    <div class="campaign-cta">
+                        <p class="muted text-sm mb-3">Crea una campaña con línea, números, contenido, formato y pausas entre envíos.</p>
+                        <button onclick="abrirModalCampana()" class="btn-line btn-primary w-full">Nueva campaña</button>
+                    </div>
+                    <div id="campaign-list" class="campaign-list"></div>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<div id="bulk-modal" class="modal-overlay" onclick="if(event.target === this) cerrarModalCampana()">
+    <div class="modal-panel">
+        <div class="modal-head">
+            <div>
+                <h2 class="panel-title">Nueva campaña WhatsApp</h2>
+                <p class="muted text-sm mt-1">Configura el envío masivo con pausas reales entre cada número.</p>
             </div>
-        </section>
+            <button onclick="cerrarModalCampana()" class="modal-close" aria-label="Cerrar">x</button>
+        </div>
+        <div class="bulk-form">
+            <div class="bulk-grid">
+                <div class="bulk-field">
+                    <label class="bulk-label" for="bulk-linea">Línea</label>
+                    <select id="bulk-linea" class="bulk-select"></select>
+                </div>
+                <div class="bulk-field">
+                    <label class="bulk-label" for="bulk-programado">Fecha y hora</label>
+                    <input id="bulk-programado" type="datetime-local" class="bulk-input">
+                </div>
+                <div class="bulk-field">
+                    <label class="bulk-label" for="bulk-delay-min">Espera mínima</label>
+                    <input id="bulk-delay-min" type="number" min="0" step="0.5" value="60" class="bulk-input">
+                </div>
+                <div class="bulk-field">
+                    <label class="bulk-label" for="bulk-delay-max">Espera máxima</label>
+                    <input id="bulk-delay-max" type="number" min="0" step="0.5" value="120" class="bulk-input">
+                </div>
+                <div class="bulk-field full">
+                    <label class="bulk-label" for="bulk-delay-unit">Unidad de espera</label>
+                    <select id="bulk-delay-unit" class="bulk-select">
+                        <option value="segundos">Segundos</option>
+                        <option value="minutos">Minutos</option>
+                    </select>
+                </div>
+                <div class="bulk-field full">
+                    <label class="bulk-label">Contenido</label>
+                    <div class="segmented">
+                        <button id="bulk-mode-message" class="segment active" onclick="setBulkMode('mensaje')" type="button">Mensaje</button>
+                        <button id="bulk-mode-prompt" class="segment" onclick="setBulkMode('prompt')" type="button">Prompt IA</button>
+                    </div>
+                </div>
+                <div class="bulk-field full">
+                    <textarea id="bulk-message" class="bulk-textarea" placeholder="Mensaje exacto que se enviará"></textarea>
+                    <textarea id="bulk-prompt" class="bulk-textarea hidden" placeholder="Prompt para que la IA redacte el mensaje antes de enviarlo"></textarea>
+                </div>
+                <div class="bulk-field full">
+                    <label class="bulk-label" for="bulk-numeros">Números</label>
+                    <textarea id="bulk-numeros" class="bulk-textarea" placeholder="573001112233&#10;573004445566&#10;573007778899"></textarea>
+                </div>
+                <div class="bulk-field full">
+                    <label class="bulk-label">Formato</label>
+                    <div class="segmented">
+                        <button id="bulk-format-text" class="segment active" onclick="setBulkFormat('texto')" type="button">Texto</button>
+                        <button id="bulk-format-audio" class="segment" onclick="setBulkFormat('audio')" type="button">Audio</button>
+                    </div>
+                </div>
+            </div>
+            <button onclick="programarEnvioMasivo()" class="btn-line btn-primary w-full">Programar campaña</button>
+            <p id="bulk-feedback" class="bulk-feedback"></p>
+        </div>
     </div>
 </div>
 
@@ -88,11 +264,23 @@ if (lineas.length === 1 && lineas[0] === 'principal' && !localStorage.getItem('w
 const lineStatus = {};
 const lineConfig = {};
 const connectingLines = new Set();
+const loadedConversations = new Set();
 let loadingSessions = false;
+let bulkMode = 'mensaje';
+let bulkFormat = 'texto';
 
 function guardarLineas() {
     localStorage.setItem('wa_lineas_usuario', '1');
     localStorage.setItem('wa_lineas', JSON.stringify(lineas));
+}
+
+function actualizarSelectorLineasMasivo() {
+    const select = document.getElementById('bulk-linea');
+    if (!select) return;
+    const actual = select.value;
+    const opciones = lineas.length ? lineas : ['principal'];
+    select.innerHTML = opciones.map(linea => `<option value="${escapeHtml(linea)}">${escapeHtml(linea)}</option>`).join('');
+    if (actual && opciones.includes(actual)) select.value = actual;
 }
 
 function agregarLinea() {
@@ -105,6 +293,7 @@ function agregarLinea() {
     renderLineas();
     checkWhatsAppStatus();
     cargarConfigLineas();
+    actualizarSelectorLineasMasivo();
 }
 
 function fusionarLineas(nuevasLineas) {
@@ -115,6 +304,7 @@ function fusionarLineas(nuevasLineas) {
     }
     lineas = combinadas.sort();
     guardarLineas();
+    actualizarSelectorLineasMasivo();
 }
 
 async function cargarSesionesGuardadas() {
@@ -151,68 +341,187 @@ function quitarLinea(linea) {
     guardarLineas();
     renderLineas();
     cargarConfigLineas();
+    actualizarSelectorLineasMasivo();
 }
 
 function renderLineas() {
     const contenedor = document.getElementById('wa-lines');
     if (lineas.length === 0) {
-        contenedor.innerHTML = '<div class="line-panel text-sm muted">Agregue una línea para conectarla a WhatsApp.</div>';
+        contenedor.innerHTML = '<div class="empty-state text-sm">Agregue una línea para conectarla a WhatsApp.</div>';
         return;
     }
     contenedor.innerHTML = lineas.map(linea => `
-        <div class="line-panel" id="line-${escapeHtml(linea)}">
-            <div class="line-head">
-                <span class="line-title">${escapeHtml(linea)}</span>
+        <details class="line-panel" id="line-${escapeHtml(linea)}">
+            <summary class="line-summary">
+                <span class="line-avatar">${escapeHtml(linea).slice(0, 2)}</span>
+                <div class="min-w-0">
+                    <div class="line-title">${escapeHtml(linea)}</div>
+                    <p id="phone-${escapeHtml(linea)}" class="line-meta"></p>
+                </div>
                 <span id="badge-${escapeHtml(linea)}" class="ml-auto text-xs px-2 py-1 rounded-full bg-slate-500/30 text-slate-400">Checking...</span>
-                <button id="delete-${escapeHtml(linea)}" onclick="eliminarLineaDefinitiva('${escapeHtml(linea)}')" class="icon-trash" title="Eliminar definitivamente" aria-label="Eliminar definitivamente ${escapeHtml(linea)}">&#128465;</button>
-            </div>
-            <p id="phone-${escapeHtml(linea)}" class="text-xs muted mb-3"></p>
-            <div id="loading-${escapeHtml(linea)}" class="line-loading hidden">
-                <span class="spinner"></span>
-                <span id="loading-text-${escapeHtml(linea)}">Preparando conexión...</span>
-            </div>
-            <div class="line-section">
-                <div class="line-section-label">Respuestas automáticas</div>
-                <div class="control-grid">
-                    <button id="cfg-chats-${escapeHtml(linea)}" onclick="toggleRespuestaLinea('${escapeHtml(linea)}', 'chats')" class="btn-line btn-muted">Chats</button>
-                    <button id="cfg-grupos-${escapeHtml(linea)}" onclick="toggleRespuestaLinea('${escapeHtml(linea)}', 'grupos')" class="btn-line btn-muted">Grupos</button>
-                    <button id="cfg-todo-${escapeHtml(linea)}" onclick="toggleRespuestaLinea('${escapeHtml(linea)}', 'todo')" class="btn-line btn-muted">Todo</button>
+                <span class="expand-label">Controles</span>
+                <button id="delete-${escapeHtml(linea)}" onclick="event.preventDefault(); event.stopPropagation(); eliminarLineaDefinitiva('${escapeHtml(linea)}')" class="icon-trash" title="Eliminar definitivamente" aria-label="Eliminar definitivamente ${escapeHtml(linea)}"></button>
+            </summary>
+            <div class="line-body">
+                <div id="loading-${escapeHtml(linea)}" class="line-loading hidden">
+                    <span class="spinner"></span>
+                    <span id="loading-text-${escapeHtml(linea)}">Preparando conexión...</span>
+                </div>
+                <div class="line-section">
+                    <div class="line-section-label">Respuestas automáticas</div>
+                    <div class="control-grid">
+                        <button id="cfg-chats-${escapeHtml(linea)}" onclick="toggleRespuestaLinea('${escapeHtml(linea)}', 'chats')" class="btn-line btn-muted">Chats</button>
+                        <button id="cfg-grupos-${escapeHtml(linea)}" onclick="toggleRespuestaLinea('${escapeHtml(linea)}', 'grupos')" class="btn-line btn-muted">Grupos</button>
+                        <button id="cfg-todo-${escapeHtml(linea)}" onclick="toggleRespuestaLinea('${escapeHtml(linea)}', 'todo')" class="btn-line btn-muted">Todo</button>
+                    </div>
+                </div>
+                <div class="line-section">
+                    <div class="line-section-label">Lectura en voz alta</div>
+                    <div class="read-grid">
+                        <button id="read-chats-${escapeHtml(linea)}" onclick="toggleLecturaLinea('${escapeHtml(linea)}', 'chats')" class="btn-line btn-muted">Leer chats</button>
+                        <button id="read-grupos-${escapeHtml(linea)}" onclick="toggleLecturaLinea('${escapeHtml(linea)}', 'grupos')" class="btn-line btn-muted">Leer grupos</button>
+                    </div>
+                </div>
+                <div class="line-section">
+                    <div class="line-section-label">Respuestas por voz</div>
+                    <button id="voice-reply-${escapeHtml(linea)}" onclick="toggleRespuestaVozLinea('${escapeHtml(linea)}')" class="btn-line btn-muted w-full">Responder con voz</button>
+                </div>
+                <div id="qr-${escapeHtml(linea)}" class="hidden mb-3">
+                    <p id="qr-counter-${escapeHtml(linea)}" class="text-xs text-yellow-400 mb-2">QR activo</p>
+                    <div class="bg-white p-3 rounded-xl w-fit">
+                        <img id="qr-img-${escapeHtml(linea)}" src="" alt="QR WhatsApp ${escapeHtml(linea)}" class="w-44 h-44">
+                    </div>
+                </div>
+                <div class="line-section">
+                    <div class="line-section-label">Conexión</div>
+                    <div class="action-grid">
+                        <button id="connect-${escapeHtml(linea)}" onclick="conectarWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-primary">Conectar</button>
+                        <button onclick="desconectarWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-neutral">Desconectar</button>
+                    </div>
+                    <div class="secondary-actions">
+                        <button onclick="borrarMemoriaWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-warning">Borrar memoria</button>
+                        <button onclick="quitarLinea('${escapeHtml(linea)}')" class="btn-line btn-muted">Quitar línea</button>
+                    </div>
+                </div>
+                <div class="line-section">
+                    <button onclick="borrarSesionWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-danger w-full">Borrar sesión del teléfono</button>
                 </div>
             </div>
-            <div class="line-section">
-                <div class="line-section-label">Lectura en voz alta</div>
-                <div class="read-grid">
-                    <button id="read-chats-${escapeHtml(linea)}" onclick="toggleLecturaLinea('${escapeHtml(linea)}', 'chats')" class="btn-line btn-muted">Leer chats</button>
-                    <button id="read-grupos-${escapeHtml(linea)}" onclick="toggleLecturaLinea('${escapeHtml(linea)}', 'grupos')" class="btn-line btn-muted">Leer grupos</button>
-                </div>
-            </div>
-            <div class="line-section">
-                <div class="line-section-label">Respuestas por voz</div>
-                <button id="voice-reply-${escapeHtml(linea)}" onclick="toggleRespuestaVozLinea('${escapeHtml(linea)}')" class="btn-line btn-muted w-full">Responder con voz</button>
-            </div>
-            <div id="qr-${escapeHtml(linea)}" class="hidden mb-3">
-                <p id="qr-counter-${escapeHtml(linea)}" class="text-xs text-yellow-400 mb-2">QR activo</p>
-                <div class="bg-white p-3 rounded-xl w-fit">
-                    <img id="qr-img-${escapeHtml(linea)}" src="" alt="QR WhatsApp ${escapeHtml(linea)}" class="w-44 h-44">
-                </div>
-            </div>
-            <div class="line-section">
-                <div class="line-section-label">Conexión</div>
-                <div class="action-grid">
-                    <button id="connect-${escapeHtml(linea)}" onclick="conectarWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-primary">Conectar</button>
-                    <button onclick="desconectarWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-neutral">Desconectar</button>
-                </div>
-                <div class="secondary-actions">
-                    <button onclick="borrarMemoriaWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-warning">Borrar memoria</button>
-                    <button onclick="quitarLinea('${escapeHtml(linea)}')" class="btn-line btn-muted">Quitar línea</button>
-                </div>
-            </div>
-            <div class="line-section">
-                <button onclick="borrarSesionWhatsApp('${escapeHtml(linea)}')" class="btn-line btn-danger w-full">Borrar sesión del teléfono</button>
-            </div>
-        </div>
+        </details>
     `).join('');
     actualizarBotonesConfig();
+    actualizarSelectorLineasMasivo();
+}
+
+function setBulkMode(mode) {
+    bulkMode = mode;
+    document.getElementById('bulk-mode-message')?.classList.toggle('active', mode === 'mensaje');
+    document.getElementById('bulk-mode-prompt')?.classList.toggle('active', mode === 'prompt');
+    document.getElementById('bulk-message')?.classList.toggle('hidden', mode !== 'mensaje');
+    document.getElementById('bulk-prompt')?.classList.toggle('hidden', mode !== 'prompt');
+}
+
+function setBulkFormat(format) {
+    bulkFormat = format;
+    document.getElementById('bulk-format-text')?.classList.toggle('active', format === 'texto');
+    document.getElementById('bulk-format-audio')?.classList.toggle('active', format === 'audio');
+}
+
+function abrirModalCampana() {
+    document.getElementById('bulk-modal')?.classList.add('active');
+    actualizarSelectorLineasMasivo();
+}
+
+function cerrarModalCampana() {
+    document.getElementById('bulk-modal')?.classList.remove('active');
+}
+
+async function programarEnvioMasivo() {
+    const feedback = document.getElementById('bulk-feedback');
+    const payload = {
+        linea: document.getElementById('bulk-linea')?.value || 'principal',
+        programado_para: document.getElementById('bulk-programado')?.value || '',
+        delay_min: document.getElementById('bulk-delay-min')?.value || 0,
+        delay_max: document.getElementById('bulk-delay-max')?.value || 0,
+        delay_unit: document.getElementById('bulk-delay-unit')?.value || 'segundos',
+        modo_contenido: bulkMode,
+        mensaje: document.getElementById('bulk-message')?.value || '',
+        prompt: document.getElementById('bulk-prompt')?.value || '',
+        numeros: document.getElementById('bulk-numeros')?.value || '',
+        formato: bulkFormat,
+    };
+
+    if (feedback) {
+        feedback.textContent = 'Programando campaña...';
+        feedback.className = 'bulk-feedback';
+    }
+
+    try {
+        const res = await fetch('/api/whatsapp/programar-masivo/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo programar');
+        if (feedback) {
+            feedback.textContent = `Campaña programada para ${data.tarea.programado_para}.`;
+            feedback.className = 'bulk-feedback text-green-300';
+        }
+        document.getElementById('bulk-message').value = '';
+        document.getElementById('bulk-prompt').value = '';
+        document.getElementById('bulk-numeros').value = '';
+        cargarCampanasWhatsApp();
+        setTimeout(cerrarModalCampana, 500);
+    } catch(e) {
+        if (feedback) {
+            feedback.textContent = `Error: ${e.message}`;
+            feedback.className = 'bulk-feedback text-red-300';
+        }
+    }
+}
+
+async function cargarCampanasWhatsApp() {
+    const contenedor = document.getElementById('campaign-list');
+    if (!contenedor) return;
+    try {
+        const res = await fetch('/api/alarmas/todas/');
+        const data = await res.json();
+        const campanas = (data.tareas || [])
+            .filter(t => t.tipo_accion === 'whatsapp' && t.parametros && Array.isArray(t.parametros.numeros))
+            .slice(0, 4);
+        if (!campanas.length) {
+            contenedor.innerHTML = '';
+            return;
+        }
+        contenedor.innerHTML = campanas.map(t => {
+            const p = t.parametros || {};
+            const progreso = p.progreso || {};
+            const total = Number(progreso.total || (p.numeros || []).length || 0);
+            const actual = Number(progreso.actual || 0);
+            const porcentaje = total > 0 ? Math.min(100, Math.round((actual / total) * 100)) : 0;
+            const mostrarProgreso = ['pendiente', 'ejecutando'].includes(t.estado) || progreso.estado;
+            const estadoColor = t.estado === 'completada' ? 'text-green-300' : t.estado === 'fallida' ? 'text-red-300' : 'text-amber-300';
+            return `
+                <article class="campaign-item">
+                    <div class="flex items-center gap-2">
+                        <strong class="text-white text-sm">${escapeHtml(t.titulo)}</strong>
+                        <span class="${estadoColor} text-xs ml-auto">${escapeHtml(t.estado_display || t.estado)}</span>
+                    </div>
+                    <p class="campaign-meta">${escapeHtml(t.programado_para_formatted || '')} · ${escapeHtml(p.linea || '')} · ${(p.numeros || []).length} números · ${escapeHtml(p.formato || 'texto')} · espera ${escapeHtml(p.delay_min || 0)}-${escapeHtml(p.delay_max || 0)} ${escapeHtml(p.delay_unit || 'segundos')}</p>
+                    ${mostrarProgreso ? `
+                        <div class="progress-wrap">
+                            <div class="progress-bar"><div class="progress-fill" style="width:${porcentaje}%"></div></div>
+                            <div class="progress-text">
+                                <span>${actual}/${total} enviados</span>
+                                <span>${escapeHtml(progreso.estado || t.estado)}${progreso.fallidos ? ` · ${progreso.fallidos} fallidos` : ''}</span>
+                            </div>
+                        </div>
+                    ` : ''}
+                </article>
+            `;
+        }).join('');
+    } catch(e) {}
 }
 
 async function cargarConfigLineas() {
@@ -320,28 +629,138 @@ async function toggleRespuestaVozLinea(linea) {
 }
 
 async function cargarMensajes() {
+    if (document.querySelector('.conversation-card[open]')) return;
     try {
         const res = await fetch('/api/mensajes/');
         const data = await res.json();
         const lista = document.getElementById('lista-mensajes');
         const badge = document.getElementById('badge-mensajes');
+        const badgeEmpty = document.getElementById('badge-mensajes-empty');
         if (data.mensajes.length === 0) {
-            lista.innerHTML = '<p class="py-4 muted">Sin mensajes nuevos</p>';
+            lista.innerHTML = '<p class="empty-state">Sin mensajes nuevos</p>';
             badge.classList.add('hidden');
+            if (badgeEmpty) badgeEmpty.classList.remove('hidden');
         } else {
             badge.textContent = data.mensajes.length;
             badge.classList.remove('hidden');
+            if (badgeEmpty) badgeEmpty.classList.add('hidden');
             lista.innerHTML = data.mensajes.map(m => `
-                <div class="bg-slate-800/80 rounded-xl p-3">
-                    <div class="flex justify-between gap-3 mb-1">
-                        <span class="font-medium text-white">${escapeHtml(m.contacto || m.numero)}</span>
-                        <span class="text-xs muted">${m.tipo === 'voz' ? 'Voz' : 'Texto'}</span>
+                <details class="conversation-card" id="conv-card-${m.conversacion_id}" ontoggle="if (this.open) cargarConversacion(${m.conversacion_id})">
+                    <summary class="conversation-summary">
+                        <div class="message-top">
+                            <span class="message-name">${escapeHtml(m.contacto || m.numero)}</span>
+                            <span class="message-kind">${m.tipo === 'voz' ? 'Voz' : 'Texto'}</span>
+                        </div>
+                        <p class="message-text">${escapeHtml(m.contenido)}</p>
+                        <p class="message-time">${escapeHtml(m.creado_en)} · abrir chat</p>
+                    </summary>
+                    <div id="chat-${m.conversacion_id}" class="chat-panel">
+                        <p class="empty-state">Cargando chat...</p>
                     </div>
-                    <p class="muted truncate">${escapeHtml(m.contenido)}</p>
-                    <p class="text-xs text-slate-600 mt-1">${escapeHtml(m.creado_en)}</p>
-                </div>`).join('');
+                </details>`).join('');
         }
     } catch(e) {}
+}
+
+async function cargarConversacion(conversacionId, force = false) {
+    const panel = document.getElementById(`chat-${conversacionId}`);
+    if (!panel || (loadedConversations.has(conversacionId) && !force)) return;
+    panel.innerHTML = '<p class="empty-state">Cargando chat...</p>';
+    try {
+        const res = await fetch(`/api/whatsapp/conversacion/${conversacionId}/`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo cargar el chat');
+        loadedConversations.add(conversacionId);
+        const puedeEnviar = Boolean(data.conversacion.destino);
+        panel.innerHTML = `
+            <div class="chat-thread">
+                ${data.mensajes.map(renderChatMessage).join('') || '<p class="empty-state">Sin historial todavía</p>'}
+            </div>
+            ${puedeEnviar ? `
+                <div class="chat-compose">
+                    <textarea id="compose-${conversacionId}" placeholder="Escribe un nuevo mensaje para ${escapeHtml(data.conversacion.contacto || data.conversacion.destino)}"></textarea>
+                    <button class="btn-line btn-primary" onclick="enviarMensajeConversacion(${conversacionId})">Enviar</button>
+                </div>
+            ` : '<p class="empty-state mt-3">Esta conversación no pertenece a una línea WhatsApp enviable.</p>'}
+        `;
+    } catch(e) {
+        panel.innerHTML = `<p class="empty-state">${escapeHtml(e.message)}</p>`;
+    }
+}
+
+function renderChatMessage(m) {
+    const saliente = m.origen === 'saliente';
+    return `
+        <div class="chat-bubble ${saliente ? 'outgoing' : 'incoming'}" id="msg-${m.id}">
+            <div class="chat-meta">${saliente ? 'IA / enviado' : 'Contacto'} · ${escapeHtml(m.creado_en)}</div>
+            <div id="msg-text-${m.id}" class="chat-text">${escapeHtml(m.contenido)}</div>
+            ${saliente ? `
+                <textarea id="edit-${m.id}" class="chat-edit hidden">${escapeHtml(m.contenido)}</textarea>
+                <div class="chat-actions">
+                    <button class="chat-mini-btn" onclick="mostrarEditorMensaje(${m.id})">Editar</button>
+                    <button class="chat-mini-btn hidden" id="save-${m.id}" onclick="guardarEdicionMensaje(${m.id}, ${m.conversacion_id})">Guardar</button>
+                    <button class="chat-mini-btn danger" onclick="eliminarMensajeChat(${m.id})">Eliminar</button>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+function mostrarEditorMensaje(mensajeId) {
+    document.getElementById(`msg-text-${mensajeId}`)?.classList.add('hidden');
+    document.getElementById(`edit-${mensajeId}`)?.classList.remove('hidden');
+    document.getElementById(`save-${mensajeId}`)?.classList.remove('hidden');
+}
+
+async function guardarEdicionMensaje(mensajeId, conversacionId) {
+    const editor = document.getElementById(`edit-${mensajeId}`);
+    const contenido = (editor?.value || '').trim();
+    if (!contenido) return alert('El mensaje no puede quedar vacío.');
+    try {
+        const res = await fetch(`/api/whatsapp/mensaje/${mensajeId}/`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({contenido})
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo editar');
+        loadedConversations.delete(conversacionId);
+        cargarConversacion(conversacionId, true);
+    } catch(e) {
+        alert(`Error editando mensaje: ${e.message}`);
+    }
+}
+
+async function eliminarMensajeChat(mensajeId) {
+    if (!confirm('¿Eliminar este mensaje del historial local?')) return;
+    try {
+        const res = await fetch(`/api/whatsapp/mensaje/${mensajeId}/`, {method: 'DELETE'});
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'No se pudo eliminar');
+        document.getElementById(`msg-${mensajeId}`)?.remove();
+    } catch(e) {
+        alert(`Error eliminando mensaje: ${e.message}`);
+    }
+}
+
+async function enviarMensajeConversacion(conversacionId) {
+    const textarea = document.getElementById(`compose-${conversacionId}`);
+    const mensaje = (textarea?.value || '').trim();
+    if (!mensaje) return;
+    try {
+        const res = await fetch(`/api/whatsapp/conversacion/${conversacionId}/enviar/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mensaje})
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo enviar');
+        textarea.value = '';
+        loadedConversations.delete(conversacionId);
+        cargarConversacion(conversacionId, true);
+    } catch(e) {
+        alert(`Error enviando mensaje: ${e.message}`);
+    }
 }
 
 async function checkWhatsAppStatus() {
@@ -349,7 +768,7 @@ async function checkWhatsAppStatus() {
     if (lineas.length === 0) {
         const badge = document.getElementById('wa-status-badge');
         badge.textContent = '0/0 conectadas';
-        badge.className = 'ml-auto text-xs px-2 py-1 rounded-full bg-slate-500/30 text-slate-400';
+        badge.className = 'stat-value text-slate-400';
         return;
     }
     for (const linea of lineas) {
@@ -365,10 +784,11 @@ async function checkWhatsAppStatus() {
     }
     const badge = document.getElementById('wa-status-badge');
     badge.textContent = `${conectadas}/${lineas.length} conectadas`;
-    badge.className = conectadas ? 'ml-auto text-xs px-2 py-1 rounded-full bg-green-500/30 text-green-300' : 'ml-auto text-xs px-2 py-1 rounded-full bg-red-500/30 text-red-300';
+    badge.className = conectadas ? 'stat-value text-green-300' : 'stat-value text-red-300';
 }
 
 function updateWAStatus(linea, data) {
+    const panel = document.getElementById(`line-${linea}`);
     const badge = document.getElementById(`badge-${linea}`);
     const qrContainer = document.getElementById(`qr-${linea}`);
     const qrCounter = document.getElementById(`qr-counter-${linea}`);
@@ -378,7 +798,7 @@ function updateWAStatus(linea, data) {
     const connectBtn = document.getElementById(`connect-${linea}`);
     if (!badge || !qrContainer) return;
     qrContainer.classList.add('hidden');
-    phone.textContent = data.phoneNumber ? `Numero conectado: ${data.phoneNumber}` : '';
+    phone.textContent = data.phoneNumber ? `Numero conectado: ${data.phoneNumber}` : 'Sin numero conectado';
     const ocultarLoading = () => {
         if (!loading) return;
         loading.classList.add('hidden');
@@ -400,6 +820,7 @@ function updateWAStatus(linea, data) {
             connectBtn.innerHTML = 'Conectar';
         }
     } else if (data.hasQR) {
+        if (panel) panel.open = true;
         connectingLines.delete(linea);
         const count = data.qrCount || 0;
         const max = data.maxQr || 20;
@@ -414,6 +835,7 @@ function updateWAStatus(linea, data) {
         if (qrCounter) qrCounter.textContent = `QR activo. Intento ${count}/${max}`;
         loadQR(linea);
     } else if (data.status === 'connecting') {
+        if (panel) panel.open = true;
         badge.textContent = 'Conectando';
         badge.className = 'ml-auto text-xs px-2 py-1 rounded-full bg-yellow-500/30 text-yellow-300';
         mostrarLoading();
@@ -594,12 +1016,13 @@ async function eliminarLineaDefinitiva(linea) {
         connectingLines.delete(linea);
         guardarLineas();
         renderLineas();
+        actualizarSelectorLineasMasivo();
         checkWhatsAppStatus();
     } catch(e) {
         alert(`Error eliminando la línea: ${e.message}`);
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = '&#128465;';
+            btn.innerHTML = '';
         }
     }
 }
@@ -609,12 +1032,16 @@ function escapeHtml(texto) {
 }
 
 renderLineas();
+actualizarSelectorLineasMasivo();
 cargarSesionesGuardadas().then(() => {
     cargarConfigLineas();
     checkWhatsAppStatus();
+    actualizarSelectorLineasMasivo();
 });
 cargarMensajes();
+cargarCampanasWhatsApp();
 setInterval(cargarMensajes, 10000);
 setInterval(checkWhatsAppStatus, 5000);
+setInterval(cargarCampanasWhatsApp, 3000);
 </script>
 {% endblock %}

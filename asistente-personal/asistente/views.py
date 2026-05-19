@@ -9,9 +9,14 @@ import base64
 import requests
 import random
 import re
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
+from django.contrib import messages
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.models import User
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.conf import settings
@@ -711,6 +716,104 @@ def extraer_texto_cv(archivo):
         return f"No se pudo extraer el texto: {str(e)}"
 
 
+@require_http_methods(["GET", "POST"])
+def login_usuario(request):
+    if request.user.is_authenticated and request.user.is_active:
+        next_url = request.GET.get('next') or settings.LOGIN_REDIRECT_URL
+        if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+            next_url = settings.LOGIN_REDIRECT_URL
+        return redirect(next_url)
+
+    usuario_activo = User.objects.filter(is_active=True).order_by('id').first()
+    aviso_pago_texto = (
+        'El acceso está temporalmente bloqueado porque la suscripción no registra el pago al día. '
+        'Cuando el pago sea confirmado, la cuenta podrá activarse nuevamente.'
+    )
+    if request.method == 'POST':
+        username = (request.POST.get('username') or '').strip()
+        password = request.POST.get('password') or ''
+        next_url = request.POST.get('next') or settings.LOGIN_REDIRECT_URL
+        if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+            next_url = settings.LOGIN_REDIRECT_URL
+
+        if not usuario_activo:
+            messages.error(request, 'Cuenta suspendida por pago pendiente. Contacta al administrador para reactivar el acceso.')
+        elif username != usuario_activo.username:
+            messages.error(request, 'Usuario o contrasena incorrectos.')
+        else:
+            user = authenticate(request, username=username, password=password)
+            if user is None:
+                messages.error(request, 'Usuario o contrasena incorrectos.')
+            elif not user.is_active:
+                messages.error(request, 'Cuenta suspendida por pago pendiente. Contacta al administrador para reactivar el acceso.')
+            else:
+                login(request, user)
+                return redirect(next_url)
+
+    if request.GET.get('inactive'):
+        messages.error(request, 'Cuenta suspendida por pago pendiente. Contacta al administrador para reactivar el acceso.')
+
+    return render(request, 'asistente/login.html', {
+        'next': request.GET.get('next', ''),
+        'username': usuario_activo.username if usuario_activo else '',
+        'cuenta_activa': bool(usuario_activo),
+        'aviso_pago_texto': aviso_pago_texto,
+    })
+
+
+@require_http_methods(["GET"])
+def login_aviso_pago_audio(request):
+    if User.objects.filter(is_active=True).exists():
+        return JsonResponse({'audio_url': None})
+
+    aviso_pago_texto = (
+        'El acceso está temporalmente bloqueado porque la suscripción no registra el pago al día. '
+        'Cuando el pago sea confirmado, la cuenta podrá activarse nuevamente.'
+    )
+    perfil = PerfilAsistente.objects.first()
+    voz = perfil.voz_preferida if perfil else None
+    velocidad = perfil.voz_velocidad if perfil else 1.0
+    cache_key = hashlib.sha256(f'{aviso_pago_texto}|{voz or ""}|{velocidad}'.encode('utf-8')).hexdigest()[:24]
+    cache_dir = settings.MEDIA_ROOT / 'audios'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    for extension in ('mp3', 'wav'):
+        nombre_cache = f'login_aviso_pago_{cache_key}.{extension}'
+        ruta_cache = cache_dir / nombre_cache
+        if ruta_cache.exists():
+            return JsonResponse({'audio_url': f'{settings.MEDIA_URL}audios/{nombre_cache}'})
+
+    try:
+        audio_url = TTSService().generar_audio(
+            aviso_pago_texto,
+            voz=voz,
+            velocidad=velocidad,
+        )
+    except Exception as exc:
+        print(f"[Login TTS] No se pudo generar audio del aviso de pago: {exc}")
+        return JsonResponse({'audio_url': None}, status=503)
+
+    ruta_generada = ruta_audio_desde_url(audio_url)
+    if ruta_generada:
+        extension = os.path.splitext(ruta_generada)[1].lower().lstrip('.') or 'mp3'
+        if extension in ('mp3', 'wav'):
+            nombre_cache = f'login_aviso_pago_{cache_key}.{extension}'
+            ruta_cache = cache_dir / nombre_cache
+            try:
+                shutil.copyfile(ruta_generada, ruta_cache)
+                audio_url = f'{settings.MEDIA_URL}audios/{nombre_cache}'
+            except OSError as exc:
+                print(f"[Login TTS] No se pudo guardar cache del aviso de pago: {exc}")
+
+    return JsonResponse({'audio_url': audio_url})
+
+
+@require_http_methods(["POST"])
+def logout_usuario(request):
+    logout(request)
+    return redirect(settings.LOGOUT_REDIRECT_URL)
+
+
 # ─── DASHBOARD ───────────────────────────────────────────────
 def dashboard(request):
     perfil = PerfilAsistente.objects.first()
@@ -752,8 +855,16 @@ def whatsapp_conectar_linea(request):
         return JsonResponse({'error': mensaje}, status=503)
 
     try:
-        response, payload = pedir_conexion_baileys(linea)
+        response, payload = pedir_conexion_baileys(linea, timeout=10)
     except requests.RequestException as exc:
+        try:
+            estado = pedir_estado_baileys(linea, timeout=2)
+        except requests.RequestException:
+            estado = {}
+        if estado.get('status') in ('connecting', 'connected') or estado.get('hasQR'):
+            estado['service_message'] = mensaje
+            estado['connection_warning'] = f'Baileys tardo en responder al conectar la linea: {exc}'
+            return JsonResponse(estado, status=200)
         return JsonResponse(
             {'error': f'Baileys inicio, pero no pude conectar la linea: {exc}'},
             status=502,
@@ -761,6 +872,11 @@ def whatsapp_conectar_linea(request):
 
     if response.status_code >= 400:
         detalle = payload.get('error') or payload.get('raw_response') or response.reason
+        estado = payload or {}
+        if estado.get('status') in ('connecting', 'connected') or estado.get('hasQR'):
+            estado['service_message'] = mensaje
+            estado['connection_warning'] = f'Baileys respondio con estado HTTP {response.status_code}: {detalle}'
+            return JsonResponse(estado, status=200)
         return JsonResponse(
             {'error': f'Baileys rechazo la conexion de la linea: {detalle}'},
             status=502,
@@ -1086,8 +1202,14 @@ def whatsapp_eliminar_linea(request):
         mensajes_eliminados = Mensaje.objects.filter(conversacion__in=conversaciones).count()
         conversaciones.delete()
 
+    advertencias = []
+    if error_baileys:
+        advertencias.append(
+            'La linea se elimino localmente, pero Baileys no confirmo el cierre remoto.'
+        )
+
     return JsonResponse({
-        'ok': not bool(error_baileys),
+        'ok': True,
         'linea': linea,
         'auth_folder': carpeta,
         'auth_deleted': borrada_local or bool(respuesta_baileys and respuesta_baileys.get('authDeleted')),
@@ -1096,8 +1218,99 @@ def whatsapp_eliminar_linea(request):
         'mensajes_eliminados': mensajes_eliminados,
         'baileys': respuesta_baileys,
         'baileys_error': error_baileys,
+        'warnings': advertencias,
         'message': 'Linea eliminada definitivamente.',
-    }, status=200 if not error_baileys else 502)
+    }, status=200)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def whatsapp_programar_masivo(request):
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
+
+    perfil = PerfilAsistente.objects.first()
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+
+    linea = normalizar_linea_whatsapp(data.get('linea') or 'principal')
+    numeros = parsear_lista_numeros_whatsapp(data.get('numeros') or [])
+    modo_contenido = (data.get('modo_contenido') or 'mensaje').strip().lower()
+    mensaje = (data.get('mensaje') or '').strip()
+    prompt = (data.get('prompt') or '').strip()
+    formato = (data.get('formato') or 'texto').strip().lower()
+    delay_unit = (data.get('delay_unit') or 'segundos').strip().lower()
+    programado_para_str = (data.get('programado_para') or '').strip()
+
+    if not numeros:
+        return JsonResponse({'error': 'Agrega al menos un número válido'}, status=400)
+    if modo_contenido not in ('mensaje', 'prompt'):
+        return JsonResponse({'error': 'Selecciona mensaje específico o prompt'}, status=400)
+    if modo_contenido == 'mensaje' and not mensaje:
+        return JsonResponse({'error': 'Escribe el mensaje específico'}, status=400)
+    if modo_contenido == 'prompt' and not prompt:
+        return JsonResponse({'error': 'Escribe el prompt para generar el mensaje'}, status=400)
+    if formato not in ('texto', 'audio'):
+        return JsonResponse({'error': 'El formato debe ser texto o audio'}, status=400)
+    if delay_unit not in ('segundos', 'minutos'):
+        return JsonResponse({'error': 'La unidad de espera debe ser segundos o minutos'}, status=400)
+    if not programado_para_str:
+        return JsonResponse({'error': 'Selecciona fecha y hora de envío'}, status=400)
+
+    try:
+        if 'T' in programado_para_str:
+            programado_para = datetime.strptime(programado_para_str, '%Y-%m-%dT%H:%M')
+        elif ' ' in programado_para_str:
+            programado_para = datetime.strptime(programado_para_str, '%Y-%m-%d %H:%M')
+        else:
+            return JsonResponse({'error': 'Usa fecha y hora completas'}, status=400)
+    except ValueError:
+        return JsonResponse({'error': 'Fecha/hora inválida'}, status=400)
+
+    try:
+        delay_min = float(data.get('delay_min') or 0)
+        delay_max = float(data.get('delay_max') or delay_min)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'El tiempo de espera debe ser numérico'}, status=400)
+
+    delay_min = max(0, delay_min)
+    delay_max = max(delay_min, delay_max)
+    titulo = (data.get('titulo') or f"Campaña WhatsApp {linea} ({len(numeros)} números)").strip()
+    parametros = {
+        'linea': linea,
+        'numeros': numeros,
+        'modo_contenido': modo_contenido,
+        'mensaje': mensaje,
+        'prompt': prompt,
+        'formato': formato,
+        'delay_min': delay_min,
+        'delay_max': delay_max,
+        'delay_unit': delay_unit,
+    }
+
+    tarea = SchedulerService.crear_tarea(
+        perfil=perfil,
+        titulo=titulo,
+        tipo_accion='whatsapp',
+        parametros=parametros,
+        programado_para=programado_para,
+    )
+
+    from .services import obtener_scheduler
+    obtener_scheduler()
+
+    return JsonResponse({
+        'ok': True,
+        'tarea': {
+            'id': tarea.id,
+            'titulo': tarea.titulo,
+            'programado_para': tarea.programado_para.strftime('%Y-%m-%d %H:%M'),
+            'estado': tarea.estado,
+            'parametros': tarea.parametros,
+        }
+    })
 
 
 def voz_page(request):
@@ -2268,6 +2481,32 @@ Sistema:
 
 
 # ─── API MENSAJES ─────────────────────────────────────────────
+def serializar_mensaje_whatsapp(mensaje):
+    return {
+        'id': mensaje.id,
+        'conversacion_id': mensaje.conversacion_id,
+        'numero': mensaje.conversacion.numero_whatsapp,
+        'contacto': mensaje.conversacion.nombre_contacto,
+        'tipo': mensaje.tipo,
+        'origen': mensaje.origen,
+        'contenido': mensaje.contenido,
+        'audio_url': mensaje.audio_url,
+        'respondido': mensaje.respondido,
+        'creado_en': mensaje.creado_en.strftime('%Y-%m-%d %H:%M'),
+    }
+
+
+def datos_destino_whatsapp(conversacion):
+    numero_guardado = conversacion.numero_whatsapp or ''
+    if ':' in numero_guardado:
+        linea, numero = numero_guardado.split(':', 1)
+    else:
+        linea, numero = 'yo', numero_guardado
+    if linea in ('desktop', 'web'):
+        return linea, ''
+    return (linea or 'yo').strip(), limpiar_numero_whatsapp(numero)
+
+
 def mensajes_recientes(request):
     perfil = PerfilAsistente.objects.first()
     if not perfil:
@@ -2281,6 +2520,7 @@ def mensajes_recientes(request):
 
     data = [{
         'id': m.id,
+        'conversacion_id': m.conversacion_id,
         'numero': m.conversacion.numero_whatsapp,
         'contacto': m.conversacion.nombre_contacto,
         'tipo': m.tipo,
@@ -2289,6 +2529,115 @@ def mensajes_recientes(request):
     } for m in mensajes]
 
     return JsonResponse({'mensajes': data})
+
+
+def whatsapp_conversacion_detalle(request, conversacion_id):
+    perfil = PerfilAsistente.objects.first()
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+
+    try:
+        conversacion = Conversacion.objects.get(id=conversacion_id, perfil=perfil)
+    except Conversacion.DoesNotExist:
+        return JsonResponse({'error': 'Conversación no encontrada'}, status=404)
+
+    linea, numero = datos_destino_whatsapp(conversacion)
+    mensajes = reversed(list(conversacion.mensajes.order_by('-creado_en')[:80]))
+    return JsonResponse({
+        'conversacion': {
+            'id': conversacion.id,
+            'contacto': conversacion.nombre_contacto,
+            'numero': conversacion.numero_whatsapp,
+            'linea': linea,
+            'destino': numero,
+        },
+        'mensajes': [serializar_mensaje_whatsapp(m) for m in mensajes],
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def whatsapp_conversacion_enviar(request, conversacion_id):
+    perfil = PerfilAsistente.objects.first()
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+
+    try:
+        conversacion = Conversacion.objects.get(id=conversacion_id, perfil=perfil)
+    except Conversacion.DoesNotExist:
+        return JsonResponse({'error': 'Conversación no encontrada'}, status=404)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        data = {}
+
+    mensaje = (data.get('mensaje') or '').strip()
+    if not mensaje:
+        return JsonResponse({'error': 'Escribe un mensaje para enviar'}, status=400)
+
+    linea, numero = datos_destino_whatsapp(conversacion)
+    if not numero:
+        return JsonResponse({'error': 'No encontré un número válido para esta conversación'}, status=400)
+
+    url_baileys = getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002'
+    try:
+        response = requests.post(
+            f"{url_baileys}/send-message",
+            json={'numero': numero, 'mensaje': mensaje, 'linea': linea},
+            timeout=15,
+        )
+        payload = response.json() if response.headers.get('content-type', '').startswith('application/json') else {'detalle': response.text[:300]}
+    except Exception as exc:
+        return JsonResponse({'error': f'No pude enviar por Baileys: {exc}'}, status=502)
+
+    if response.status_code != 200:
+        return JsonResponse({'error': payload.get('error') or 'No se pudo enviar el mensaje', 'detalle': payload}, status=response.status_code)
+
+    msg = Mensaje.objects.create(
+        conversacion=conversacion,
+        tipo='texto',
+        origen='saliente',
+        contenido=mensaje,
+        respondido=True,
+    )
+    return JsonResponse({'ok': True, 'mensaje': serializar_mensaje_whatsapp(msg), 'baileys': payload})
+
+
+@csrf_exempt
+@require_http_methods(["PATCH", "DELETE"])
+def whatsapp_mensaje_detalle(request, mensaje_id):
+    perfil = PerfilAsistente.objects.first()
+    if not perfil:
+        return JsonResponse({'error': 'Perfil no configurado'}, status=400)
+
+    try:
+        mensaje = Mensaje.objects.select_related('conversacion').get(
+            id=mensaje_id,
+            conversacion__perfil=perfil,
+        )
+    except Mensaje.DoesNotExist:
+        return JsonResponse({'error': 'Mensaje no encontrado'}, status=404)
+
+    if request.method == 'DELETE':
+        mensaje.delete()
+        return JsonResponse({'ok': True})
+
+    if mensaje.origen != 'saliente':
+        return JsonResponse({'error': 'Solo puedes editar mensajes de respuesta o enviados por la IA'}, status=400)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        data = {}
+
+    contenido = (data.get('contenido') or '').strip()
+    if not contenido:
+        return JsonResponse({'error': 'El mensaje no puede quedar vacío'}, status=400)
+
+    mensaje.contenido = contenido
+    mensaje.save(update_fields=['contenido'])
+    return JsonResponse({'ok': True, 'mensaje': serializar_mensaje_whatsapp(mensaje)})
 
 
 def whatsapp_estadisticas(request):
@@ -2862,6 +3211,7 @@ def listar_todas_tareas(request):
         'titulo': t.titulo,
         'tipo_accion': t.tipo_accion,
         'tipo_accion_display': t.get_tipo_accion_display(),
+        'parametros': t.parametros,
         'programado_para': t.programado_para.isoformat(),
         'programado_para_formatted': t.programado_para.strftime('%Y-%m-%d %H:%M'),
         'estado': t.estado,

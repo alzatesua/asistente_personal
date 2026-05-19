@@ -28,6 +28,7 @@ const MAX_QR_GENERATIONS = 20;
 const QR_RETRY_DELAY_MS = 8000;
 const CONNECTED_RETRY_DELAY_MS = 3000;
 const POST_SCAN_RESTART_DELAY_MS = 1500;
+const LOGOUT_TIMEOUT_MS = Number(process.env.LOGOUT_TIMEOUT_MS || 3000);
 
 const sessionsRoot = path.join(__dirname, 'baileys_sessions');
 fs.mkdirSync(sessionsRoot, { recursive: true });
@@ -63,6 +64,7 @@ function getSession(lineId = DEFAULT_LINE_ID) {
             qrGenerationCount: 0,
             reconnectTimeout: null,
             phoneNumber: null,
+            lastError: null,
         });
     }
     return sessions.get(id);
@@ -81,6 +83,7 @@ function sessionToJSON(session) {
         qrCount: session.qrGenerationCount,
         maxQr: MAX_QR_GENERATIONS,
         phoneNumber: session.phoneNumber,
+        lastError: session.lastError,
     };
 }
 
@@ -229,6 +232,7 @@ async function connectToWhatsApp(lineId = DEFAULT_LINE_ID) {
                 const scannedQrNeedsRestart = statusCode === DisconnectReason.restartRequired;
                 const invalidAuthBeforeQr = statusCode === DisconnectReason.loggedOut && !session.wasConnected;
 
+                session.lastError = lastDisconnect?.error?.message || errorData?.message || reason;
                 session.connectionStatus = 'disconnected';
                 session.currentQR = null;
                 session.isConnecting = false;
@@ -265,6 +269,7 @@ async function connectToWhatsApp(lineId = DEFAULT_LINE_ID) {
                 session.isConnecting = false;
                 session.wasConnected = true;
                 session.qrGenerationCount = 0;
+                session.lastError = null;
                 session.phoneNumber = session.socket.user?.id.split(':')[0] || null;
                 stopReconnect(session);
                 console.log(`[${session.id}] ✅ ¡Conectado!`);
@@ -390,6 +395,7 @@ async function connectToWhatsApp(lineId = DEFAULT_LINE_ID) {
 
     } catch (error) {
         console.error(`[${session.id}] ❌ Error conexión:`, error.message);
+        session.lastError = error.message;
         session.isConnecting = false;
         session.connectionStatus = 'disconnected';
     }
@@ -410,14 +416,28 @@ function resetSessionRuntime(session) {
     session.qrGenerationCount = 0;
     session.currentQR = null;
     session.phoneNumber = null;
+    session.lastError = null;
     session.socket = null;
+}
+
+function withTimeout(promise, milliseconds, message) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), milliseconds);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 async function logoutAndCloseSession(session) {
     stopReconnect(session);
     try {
         if (session.socket && session.connectionStatus === 'connected') {
-            await session.socket.logout();
+            await withTimeout(
+                session.socket.logout(),
+                LOGOUT_TIMEOUT_MS,
+                `logout excedio ${LOGOUT_TIMEOUT_MS}ms`
+            );
         } else if (session.socket?.ws?.close) {
             session.socket.ws.close();
         }
@@ -558,6 +578,32 @@ app.post('/send-message', async (req, res) => {
     const messageId = result?.key?.id || null;
     console.log(`[${session.id}] 📤 Enviado a ${numero}${messageId ? ` (${messageId})` : ''}`);
     res.json({ message: 'Mensaje enviado', numero, jid, messageId, ...sessionToJSON(session) });
+});
+
+app.post('/send-audio', async (req, res) => {
+    try {
+        const body = req.body || {};
+        const session = getSession(body.linea || req.query.linea);
+        const numero = normalizePhoneNumber(body.numero);
+        const audioUrl = String(body.audio_url || body.audioUrl || '');
+
+        if (!numero || !audioUrl) {
+            return res.status(400).json({ error: 'Faltan numero o audio_url' });
+        }
+        if (session.connectionStatus !== 'connected' || !session.socket) {
+            return res.status(409).json({ error: `La linea ${session.id} no esta conectada`, ...sessionToJSON(session) });
+        }
+
+        const jid = `${numero}@s.whatsapp.net`;
+        const urls = await expandAudioUrls(audioUrl);
+        for (let index = 0; index < urls.length; index++) {
+            await sendAudioUrl(session, jid, urls[index], index);
+        }
+        console.log(`[${session.id}] 🔊 Audio enviado a ${numero} (${urls.length} parte(s))`);
+        res.json({ message: 'Audio enviado', numero, jid, parts: urls.length, ...sessionToJSON(session) });
+    } catch (error) {
+        res.status(500).json({ error: `No pude enviar audio: ${error.message}` });
+    }
 });
 
 const server = app.listen(PORT, HOST);

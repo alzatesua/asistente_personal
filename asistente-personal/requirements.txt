@@ -16,8 +16,10 @@ idna==3.14
 kombu==5.6.2
 packaging==26.2
 pillow==12.2.0
+piper-tts==1.4.2
 prompt_toolkit==3.0.52
 pydub==0.25.1
+pyttsx3==2.99
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 redis==7.4.0

@@ -550,6 +550,12 @@
                 </svg>
                 <span class="hidden sm:inline">Configurar</span>
             </a>
+            <form method="post" action="/logout/" class="m-0">
+                {% csrf_token %}
+                <button type="submit" class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition">
+                    <span>Salir</span>
+                </button>
+            </form>
         </div>
     </nav>
 
