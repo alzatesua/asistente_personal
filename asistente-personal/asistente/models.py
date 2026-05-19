@@ -1,8 +1,16 @@
 from django.db import models
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from datetime import datetime
 
 class PerfilAsistente(models.Model):
+    usuario = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='perfil_asistente',
+        null=True,
+        blank=True,
+    )
     nombre_asistente = models.CharField(max_length=100, default='Asistente')
     nombre_usuario = models.CharField(max_length=100)
     cv_archivo = models.FileField(upload_to='cvs/', null=True, blank=True)
@@ -20,6 +28,7 @@ class PerfilAsistente(models.Model):
 
     class Meta:
         verbose_name = 'Perfil del Asistente'
+        verbose_name_plural = 'Perfiles del Asistente'
 
     def __str__(self):
         return f"{self.nombre_asistente} - {self.nombre_usuario}"

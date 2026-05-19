@@ -58,7 +58,7 @@
 </div>
 
 <script>
-const CHAT_SESSION_KEY = 'asistente_chat_session_id';
+const CHAT_SESSION_KEY = 'asistente_chat_session_id_u{{ request.user.id }}';
 
 function crearSessionId() {
     return crypto.randomUUID ? crypto.randomUUID() : 'sesion-' + Date.now();

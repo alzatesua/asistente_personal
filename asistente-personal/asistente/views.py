@@ -16,6 +16,7 @@ from django.http import JsonResponse
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -29,6 +30,9 @@ import io
 
 BAILEYS_START_TIMEOUT_SECONDS = 8
 WHATSAPP_NOTIFICACION_MAX_CHARS = 260
+LOGIN_MAX_INTENTOS = 5
+LOGIN_BLOQUEO_INICIAL_SEGUNDOS = 30
+LOGIN_BLOQUEO_MAX_SEGUNDOS = 30 * 60
 WHATSAPP_LINE_DEFAULTS = {
     'responder_chats': True,
     'responder_grupos': True,
@@ -36,6 +40,98 @@ WHATSAPP_LINE_DEFAULTS = {
     'leer_grupos': True,
     'responder_voz': False,
 }
+
+
+def obtener_ip_cliente(request):
+    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def login_intentos_key(username, ip_cliente):
+    identidad = f'{(username or "").strip().lower()}|{ip_cliente or ""}'
+    digest = hashlib.sha256(identidad.encode('utf-8')).hexdigest()
+    return f'login_intentos:{digest}'
+
+
+def login_estado_bloqueo(username, ip_cliente):
+    estado = cache.get(login_intentos_key(username, ip_cliente)) or {}
+    bloqueo_hasta = float(estado.get('bloqueo_hasta') or 0)
+    restante = int(max(0, bloqueo_hasta - time.time()))
+    if restante <= 0:
+        return estado, 0
+    return estado, restante
+
+
+def registrar_login_fallido(username, ip_cliente):
+    key = login_intentos_key(username, ip_cliente)
+    estado = cache.get(key) or {}
+    intentos = int(estado.get('intentos') or 0) + 1
+    bloqueos = int(estado.get('bloqueos') or 0)
+
+    if intentos >= LOGIN_MAX_INTENTOS:
+        espera = min(
+            LOGIN_BLOQUEO_INICIAL_SEGUNDOS * (2 ** bloqueos),
+            LOGIN_BLOQUEO_MAX_SEGUNDOS,
+        )
+        estado = {
+            'intentos': 0,
+            'bloqueos': bloqueos + 1,
+            'bloqueo_hasta': time.time() + espera,
+        }
+        cache.set(key, estado, timeout=LOGIN_BLOQUEO_MAX_SEGUNDOS * 2)
+        return espera
+
+    estado.update({'intentos': intentos, 'bloqueo_hasta': 0, 'bloqueos': bloqueos})
+    cache.set(key, estado, timeout=LOGIN_BLOQUEO_MAX_SEGUNDOS * 2)
+    return 0
+
+
+def limpiar_login_fallidos(username, ip_cliente):
+    cache.delete(login_intentos_key(username, ip_cliente))
+
+
+def obtener_perfil_usuario(request, crear=True):
+    if not getattr(request, 'user', None) or not request.user.is_authenticated:
+        return None
+
+    try:
+        return request.user.perfil_asistente
+    except PerfilAsistente.DoesNotExist:
+        if not crear:
+            return None
+
+        return PerfilAsistente.objects.create(
+            usuario=request.user,
+            nombre_usuario=request.user.get_full_name() or request.user.username,
+            nombre_asistente='Asistente',
+        )
+
+
+def prefijo_whatsapp_perfil(perfil):
+    return f"u{perfil.id}-" if perfil and perfil.id else ""
+
+
+def linea_whatsapp_publica(linea):
+    linea = normalizar_linea_whatsapp(linea)
+    match = re.match(r'^u\d+-(.+)$', linea)
+    return normalizar_linea_whatsapp(match.group(1)) if match else linea
+
+
+def linea_whatsapp_interna(perfil, linea):
+    linea = linea_whatsapp_publica(linea)
+    return f"{prefijo_whatsapp_perfil(perfil)}{linea}" if perfil else linea
+
+
+def perfil_desde_linea_whatsapp(linea):
+    linea = normalizar_linea_whatsapp(linea)
+    match = re.match(r'^u(\d+)-', linea)
+    if match:
+        return PerfilAsistente.objects.filter(id=match.group(1)).first(), linea_whatsapp_publica(linea)
+    if PerfilAsistente.objects.filter(usuario__isnull=False).count() == 1:
+        return PerfilAsistente.objects.filter(usuario__isnull=False).first(), linea
+    return None, linea
 
 
 def obtener_session_key(request):
@@ -207,6 +303,7 @@ def linea_tiene_sesion_baileys(linea):
 
 def listar_lineas_whatsapp_guardadas(perfil=None):
     lineas = set()
+    prefijo_perfil = prefijo_whatsapp_perfil(perfil)
 
     sessions_root = baileys_sessions_root()
     if sessions_root.exists():
@@ -216,8 +313,14 @@ def listar_lineas_whatsapp_guardadas(perfil=None):
             nombre = carpeta.name
             if '.backup-' in nombre or nombre.endswith('.bak'):
                 continue
-            if (carpeta / 'creds.json').exists():
-                lineas.add(normalizar_linea_whatsapp(nombre))
+            nombre = normalizar_linea_whatsapp(nombre)
+            if not (carpeta / 'creds.json').exists():
+                continue
+            if perfil:
+                if nombre.startswith(prefijo_perfil):
+                    lineas.add(linea_whatsapp_publica(nombre))
+            else:
+                lineas.add(linea_whatsapp_publica(nombre))
 
     if perfil:
         prefijos_excluidos = ('web:', 'desktop:')
@@ -227,7 +330,7 @@ def listar_lineas_whatsapp_guardadas(perfil=None):
             if ':' not in numero or numero.startswith(prefijos_excluidos):
                 continue
             linea = numero.split(':', 1)[0]
-            lineas.add(normalizar_linea_whatsapp(linea))
+            lineas.add(linea_whatsapp_publica(linea))
 
     return sorted(linea for linea in lineas if linea)
 
@@ -724,7 +827,6 @@ def login_usuario(request):
             next_url = settings.LOGIN_REDIRECT_URL
         return redirect(next_url)
 
-    usuario_activo = User.objects.filter(is_active=True).order_by('id').first()
     aviso_pago_texto = (
         'El acceso está temporalmente bloqueado porque la suscripción no registra el pago al día. '
         'Cuando el pago sea confirmado, la cuenta podrá activarse nuevamente.'
@@ -736,17 +838,28 @@ def login_usuario(request):
         if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
             next_url = settings.LOGIN_REDIRECT_URL
 
-        if not usuario_activo:
-            messages.error(request, 'Cuenta suspendida por pago pendiente. Contacta al administrador para reactivar el acceso.')
-        elif username != usuario_activo.username:
-            messages.error(request, 'Usuario o contrasena incorrectos.')
+        ip_cliente = obtener_ip_cliente(request)
+        _, bloqueo_restante = login_estado_bloqueo(username, ip_cliente)
+        if bloqueo_restante:
+            messages.error(
+                request,
+                f'Demasiados intentos fallidos. Espera {bloqueo_restante} segundos antes de volver a intentar.',
+            )
         else:
             user = authenticate(request, username=username, password=password)
             if user is None:
-                messages.error(request, 'Usuario o contrasena incorrectos.')
+                espera = registrar_login_fallido(username, ip_cliente)
+                if espera:
+                    messages.error(
+                        request,
+                        f'Demasiados intentos fallidos. Espera {espera} segundos antes de volver a intentar.',
+                    )
+                else:
+                    messages.error(request, 'Usuario o contrasena incorrectos.')
             elif not user.is_active:
                 messages.error(request, 'Cuenta suspendida por pago pendiente. Contacta al administrador para reactivar el acceso.')
             else:
+                limpiar_login_fallidos(username, ip_cliente)
                 login(request, user)
                 return redirect(next_url)
 
@@ -755,8 +868,8 @@ def login_usuario(request):
 
     return render(request, 'asistente/login.html', {
         'next': request.GET.get('next', ''),
-        'username': usuario_activo.username if usuario_activo else '',
-        'cuenta_activa': bool(usuario_activo),
+        'username': username if request.method == 'POST' else '',
+        'cuenta_activa': User.objects.filter(is_active=True).exists(),
         'aviso_pago_texto': aviso_pago_texto,
     })
 
@@ -770,7 +883,7 @@ def login_aviso_pago_audio(request):
         'El acceso está temporalmente bloqueado porque la suscripción no registra el pago al día. '
         'Cuando el pago sea confirmado, la cuenta podrá activarse nuevamente.'
     )
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     voz = perfil.voz_preferida if perfil else None
     velocidad = perfil.voz_velocidad if perfil else 1.0
     cache_key = hashlib.sha256(f'{aviso_pago_texto}|{voz or ""}|{velocidad}'.encode('utf-8')).hexdigest()[:24]
@@ -816,7 +929,7 @@ def logout_usuario(request):
 
 # ─── DASHBOARD ───────────────────────────────────────────────
 def dashboard(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     conversaciones = []
     if perfil:
         conversaciones = Conversacion.objects.filter(perfil=perfil).order_by('-creada_en')[:20]
@@ -827,17 +940,17 @@ def dashboard(request):
 
 
 def chat_page(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     return render(request, 'asistente/chat.html', {'perfil': perfil})
 
 
 def tareas_page(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     return render(request, 'asistente/tareas.html', {'perfil': perfil})
 
 
 def whatsapp_page(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     return render(request, 'asistente/whatsapp.html', {'perfil': perfil})
 
 
@@ -849,16 +962,18 @@ def whatsapp_conectar_linea(request):
     except json.JSONDecodeError:
         data = {}
 
-    linea = normalizar_linea_whatsapp(data.get('linea', 'principal') or 'principal')
+    perfil = obtener_perfil_usuario(request)
+    linea = linea_whatsapp_publica(data.get('linea', 'principal') or 'principal')
+    linea_interna = linea_whatsapp_interna(perfil, linea)
     iniciado, mensaje = iniciar_baileys_si_hace_falta()
     if not iniciado:
         return JsonResponse({'error': mensaje}, status=503)
 
     try:
-        response, payload = pedir_conexion_baileys(linea, timeout=10)
+        response, payload = pedir_conexion_baileys(linea_interna, timeout=10)
     except requests.RequestException as exc:
         try:
-            estado = pedir_estado_baileys(linea, timeout=2)
+            estado = pedir_estado_baileys(linea_interna, timeout=2)
         except requests.RequestException:
             estado = {}
         if estado.get('status') in ('connecting', 'connected') or estado.get('hasQR'):
@@ -882,47 +997,49 @@ def whatsapp_conectar_linea(request):
             status=502,
         )
 
-    estado = esperar_qr_o_conexion_baileys(linea)
+    estado = esperar_qr_o_conexion_baileys(linea_interna)
     if estado.get('hasQR') or estado.get('status') == 'connected':
         payload.update(estado)
     else:
         try:
-            borrar_sesion_baileys_remota(linea)
-            response, payload = pedir_conexion_baileys(linea)
+            borrar_sesion_baileys_remota(linea_interna)
+            response, payload = pedir_conexion_baileys(linea_interna)
             if response.status_code >= 400:
                 detalle = payload.get('error') or payload.get('raw_response') or response.reason
                 return JsonResponse(
                     {'error': f'Baileys rechazo la conexion de la linea: {detalle}'},
                     status=502,
                 )
-            estado = esperar_qr_o_conexion_baileys(linea)
+            estado = esperar_qr_o_conexion_baileys(linea_interna)
             payload.update(estado)
             payload['session_reset'] = True
         except requests.RequestException as exc:
             payload['reset_error'] = str(exc)
 
     payload['service_message'] = mensaje
+    payload['linea'] = linea
     return JsonResponse(payload, status=response.status_code)
 
 
 @require_http_methods(["GET"])
 def whatsapp_sesiones(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     lineas = listar_lineas_whatsapp_guardadas(perfil)
     sesiones = []
 
     for linea in lineas:
+        linea_interna = linea_whatsapp_interna(perfil, linea)
         estado = {'status': 'offline', 'hasQR': False}
         if baileys_esta_activo():
             try:
-                estado = pedir_estado_baileys(linea, timeout=2)
+                estado = pedir_estado_baileys(linea_interna, timeout=2)
             except requests.RequestException:
                 estado = {'status': 'offline', 'hasQR': False}
 
         sesiones.append({
             'linea': linea,
-            'tiene_sesion': linea_tiene_sesion_baileys(linea),
-            'config': obtener_config_linea(linea),
+            'tiene_sesion': linea_tiene_sesion_baileys(linea_interna),
+            'config': obtener_config_linea(linea_interna),
             'estado': estado,
         })
 
@@ -937,10 +1054,10 @@ def whatsapp_iniciar_todo(request):
     except json.JSONDecodeError:
         data = {}
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     lineas_payload = data.get('lineas')
     if isinstance(lineas_payload, list):
-        lineas = [normalizar_linea_whatsapp(linea) for linea in lineas_payload if str(linea).strip()]
+        lineas = [linea_whatsapp_publica(linea) for linea in lineas_payload if str(linea).strip()]
     else:
         lineas = listar_lineas_whatsapp_guardadas(perfil)
 
@@ -954,19 +1071,20 @@ def whatsapp_iniciar_todo(request):
 
     resultados = []
     for linea in lineas:
+        linea_interna = linea_whatsapp_interna(perfil, linea)
         try:
-            estado_actual = pedir_estado_baileys(linea, timeout=2)
+            estado_actual = pedir_estado_baileys(linea_interna, timeout=2)
             if estado_actual.get('status') == 'connected':
                 resultados.append({'linea': linea, 'ok': True, **estado_actual})
                 continue
 
-            response, payload = pedir_conexion_baileys(linea, timeout=4)
+            response, payload = pedir_conexion_baileys(linea_interna, timeout=4)
             if response.status_code >= 400:
                 detalle = payload.get('error') or payload.get('raw_response') or response.reason
                 resultados.append({'linea': linea, 'ok': False, 'error': detalle})
                 continue
 
-            estado = esperar_qr_o_conexion_baileys(linea, segundos=4)
+            estado = esperar_qr_o_conexion_baileys(linea_interna, segundos=4)
             payload.update(estado)
             resultados.append({'linea': linea, 'ok': True, **payload})
         except requests.RequestException as exc:
@@ -982,7 +1100,8 @@ def whatsapp_iniciar_todo(request):
 
 @require_http_methods(["GET"])
 def whatsapp_estado_linea(request, linea):
-    linea = normalizar_linea_whatsapp(linea)
+    perfil = obtener_perfil_usuario(request)
+    linea = linea_whatsapp_interna(perfil, linea)
     try:
         response = requests.get(f"{baileys_service_url()}/status/{linea}", timeout=3)
     except requests.RequestException as exc:
@@ -1000,7 +1119,8 @@ def whatsapp_estado_linea(request, linea):
 
 @require_http_methods(["GET"])
 def whatsapp_qr_linea(request, linea):
-    linea = normalizar_linea_whatsapp(linea)
+    perfil = obtener_perfil_usuario(request)
+    linea = linea_whatsapp_interna(perfil, linea)
     try:
         response = requests.get(
             f"{baileys_service_url()}/qr/{linea}",
@@ -1019,7 +1139,8 @@ def whatsapp_qr_linea(request, linea):
 @csrf_exempt
 @require_http_methods(["POST"])
 def whatsapp_desconectar_linea(request, linea):
-    linea = normalizar_linea_whatsapp(linea)
+    perfil = obtener_perfil_usuario(request)
+    linea = linea_whatsapp_interna(perfil, linea)
     try:
         response = requests.post(
             f"{baileys_service_url()}/disconnect/{linea}",
@@ -1042,11 +1163,11 @@ def whatsapp_borrar_memoria(request):
     except json.JSONDecodeError:
         data = {}
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
-    linea = (data.get('linea') or '').strip()
+    linea = linea_whatsapp_publica(data.get('linea') or '')
     borrar_todo = bool(data.get('todo')) or not linea
 
     conversaciones = Conversacion.objects.filter(perfil=perfil)
@@ -1074,18 +1195,19 @@ def whatsapp_borrar_memoria(request):
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def whatsapp_config_lineas(request):
+    perfil = obtener_perfil_usuario(request)
     if request.method == 'GET':
         lineas_param = request.GET.get('lineas', '')
         if lineas_param.strip():
             lineas = [
-                normalizar_linea_whatsapp(linea)
+                linea_whatsapp_publica(linea)
                 for linea in lineas_param.split(',')
                 if linea.strip()
             ]
         else:
-            lineas = sorted(cargar_config_whatsapp().keys()) or ['principal']
+            lineas = listar_lineas_whatsapp_guardadas(perfil) or ['principal']
         return JsonResponse({
-            'lineas': {linea: obtener_config_linea(linea) for linea in lineas}
+            'lineas': {linea: obtener_config_linea(linea_whatsapp_interna(perfil, linea)) for linea in lineas}
         })
 
     try:
@@ -1093,9 +1215,10 @@ def whatsapp_config_lineas(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'JSON invalido'}, status=400)
 
-    linea = normalizar_linea_whatsapp(data.get('linea'))
+    linea = linea_whatsapp_publica(data.get('linea'))
+    linea_interna = linea_whatsapp_interna(perfil, linea)
     config = cargar_config_whatsapp()
-    actual = obtener_config_linea(linea)
+    actual = obtener_config_linea(linea_interna)
 
     if 'responder_chats' in data:
         actual['responder_chats'] = bool(data['responder_chats'])
@@ -1114,13 +1237,14 @@ def whatsapp_config_lineas(request):
         actual['responder_chats'] = True
         actual['responder_grupos'] = True
 
-    config[linea] = {
+    config[linea_interna] = {
         'responder_chats': actual['responder_chats'],
         'responder_grupos': actual['responder_grupos'],
         'leer_chats': actual['leer_chats'],
         'leer_grupos': actual['leer_grupos'],
         'responder_voz': actual['responder_voz'],
     }
+    actual['linea'] = linea
     guardar_config_whatsapp(config)
     return JsonResponse({'ok': True, 'config': actual})
 
@@ -1133,13 +1257,15 @@ def whatsapp_borrar_sesion(request):
     except json.JSONDecodeError:
         data = {}
 
-    linea = normalizar_linea_whatsapp(data.get('linea'))
+    perfil = obtener_perfil_usuario(request)
+    linea = linea_whatsapp_publica(data.get('linea'))
+    linea_interna = linea_whatsapp_interna(perfil, linea)
     respuesta_baileys = None
 
     if baileys_esta_activo():
         try:
             response = requests.post(
-                f"{baileys_service_url()}/delete-session/{linea}",
+                f"{baileys_service_url()}/delete-session/{linea_interna}",
                 timeout=10,
             )
             respuesta_baileys = respuesta_json_o_texto(response) if response.content else {}
@@ -1151,7 +1277,7 @@ def whatsapp_borrar_sesion(request):
         except requests.RequestException as exc:
             print(f"[WhatsApp Sesion] Baileys no respondio al borrar sesion: {exc}")
 
-    borrada_local, carpeta = borrar_sesion_baileys_local(linea)
+    borrada_local, carpeta = borrar_sesion_baileys_local(linea_interna)
     return JsonResponse({
         'ok': True,
         'linea': linea,
@@ -1170,15 +1296,16 @@ def whatsapp_eliminar_linea(request):
     except json.JSONDecodeError:
         data = {}
 
-    linea = normalizar_linea_whatsapp(data.get('linea'))
-    perfil = PerfilAsistente.objects.first()
+    linea = linea_whatsapp_publica(data.get('linea'))
+    perfil = obtener_perfil_usuario(request)
+    linea_interna = linea_whatsapp_interna(perfil, linea)
     respuesta_baileys = None
     error_baileys = None
 
     if baileys_esta_activo():
         try:
             response = requests.post(
-                f"{baileys_service_url()}/delete-session/{linea}",
+                f"{baileys_service_url()}/delete-session/{linea_interna}",
                 timeout=10,
             )
             respuesta_baileys = respuesta_json_o_texto(response) if response.content else {}
@@ -1188,8 +1315,8 @@ def whatsapp_eliminar_linea(request):
             error_baileys = str(exc)
             print(f"[WhatsApp Linea] Baileys no respondio al eliminar linea: {exc}")
 
-    borrada_local, carpeta = borrar_sesion_baileys_local(linea)
-    config_eliminada = eliminar_config_linea_whatsapp(linea)
+    borrada_local, carpeta = borrar_sesion_baileys_local(linea_interna)
+    config_eliminada = eliminar_config_linea_whatsapp(linea_interna)
 
     conversaciones_eliminadas = 0
     mensajes_eliminados = 0
@@ -1231,11 +1358,12 @@ def whatsapp_programar_masivo(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'JSON inválido'}, status=400)
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
-    linea = normalizar_linea_whatsapp(data.get('linea') or 'principal')
+    linea = linea_whatsapp_publica(data.get('linea') or 'principal')
+    linea_interna = linea_whatsapp_interna(perfil, linea)
     numeros = parsear_lista_numeros_whatsapp(data.get('numeros') or [])
     modo_contenido = (data.get('modo_contenido') or 'mensaje').strip().lower()
     mensaje = (data.get('mensaje') or '').strip()
@@ -1279,7 +1407,8 @@ def whatsapp_programar_masivo(request):
     delay_max = max(delay_min, delay_max)
     titulo = (data.get('titulo') or f"Campaña WhatsApp {linea} ({len(numeros)} números)").strip()
     parametros = {
-        'linea': linea,
+        'linea': linea_interna,
+        'linea_publica': linea,
         'numeros': numeros,
         'modo_contenido': modo_contenido,
         'mensaje': mensaje,
@@ -1314,7 +1443,7 @@ def whatsapp_programar_masivo(request):
 
 
 def voz_page(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     return render(request, 'asistente/voz.html', {'perfil': perfil})
 
 
@@ -1325,7 +1454,7 @@ def configurar_perfil(request):
         cv_archivo = request.FILES.get('cv_archivo')
         modo_dev = request.POST.get('modo_desarrollador') == 'on'
 
-        perfil, _ = PerfilAsistente.objects.get_or_create(id=1)
+        perfil, _ = obtener_perfil_usuario(request), False
         perfil.nombre_usuario = nombre_usuario
         perfil.nombre_asistente = nombre_asistente
 
@@ -1336,8 +1465,94 @@ def configurar_perfil(request):
         perfil.save()
         return redirect('dashboard')
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     return render(request, 'asistente/configurar.html', {'perfil': perfil})
+
+
+def usuarios_page(request):
+    if not request.user.is_superuser:
+        return JsonResponse({'error': 'No autorizado'}, status=403)
+
+    if request.method == 'POST':
+        accion = request.POST.get('accion')
+        user_id = request.POST.get('user_id')
+
+        if accion == 'crear':
+            username = (request.POST.get('username') or '').strip()
+            email = (request.POST.get('email') or '').strip()
+            password = request.POST.get('password') or ''
+            nombre_empresa = (request.POST.get('nombre_empresa') or username).strip()
+            is_staff = request.POST.get('is_staff') == 'on'
+
+            if not username or not password:
+                messages.error(request, 'El usuario y la contraseña son obligatorios.')
+            elif User.objects.filter(username=username).exists():
+                messages.error(request, 'Ya existe un usuario con ese nombre.')
+            else:
+                usuario = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    is_staff=is_staff,
+                    is_active=True,
+                )
+                PerfilAsistente.objects.create(
+                    usuario=usuario,
+                    nombre_usuario=nombre_empresa,
+                    nombre_asistente='Asistente',
+                )
+                messages.success(request, f'Usuario {username} creado correctamente.')
+            return redirect('usuarios_page')
+
+        usuario = User.objects.filter(id=user_id).first()
+        if not usuario:
+            messages.error(request, 'Usuario no encontrado.')
+            return redirect('usuarios_page')
+
+        if accion == 'actualizar':
+            username = (request.POST.get('username') or '').strip()
+            email = (request.POST.get('email') or '').strip()
+            nombre_empresa = (request.POST.get('nombre_empresa') or username).strip()
+
+            if not username:
+                messages.error(request, 'El nombre de usuario no puede quedar vacío.')
+            elif User.objects.exclude(id=usuario.id).filter(username=username).exists():
+                messages.error(request, 'Ya existe otro usuario con ese nombre.')
+            else:
+                usuario.username = username
+                usuario.email = email
+                usuario.is_staff = request.POST.get('is_staff') == 'on'
+                usuario.save(update_fields=['username', 'email', 'is_staff'])
+                perfil, _ = PerfilAsistente.objects.get_or_create(
+                    usuario=usuario,
+                    defaults={'nombre_usuario': nombre_empresa, 'nombre_asistente': 'Asistente'},
+                )
+                perfil.nombre_usuario = nombre_empresa
+                perfil.save(update_fields=['nombre_usuario', 'actualizado_en'])
+                messages.success(request, f'Usuario {username} actualizado.')
+
+        elif accion == 'password':
+            password = request.POST.get('password') or ''
+            if len(password) < 6:
+                messages.error(request, 'La contraseña debe tener al menos 6 caracteres.')
+            else:
+                usuario.set_password(password)
+                usuario.save(update_fields=['password'])
+                messages.success(request, f'Contraseña actualizada para {usuario.username}.')
+
+        elif accion == 'toggle_activo':
+            if usuario.id == request.user.id:
+                messages.error(request, 'No puedes inactivar tu propio usuario desde esta pantalla.')
+            else:
+                usuario.is_active = not usuario.is_active
+                usuario.save(update_fields=['is_active'])
+                estado = 'activado' if usuario.is_active else 'inactivado'
+                messages.success(request, f'Usuario {usuario.username} {estado}.')
+
+        return redirect('usuarios_page')
+
+    usuarios = User.objects.select_related('perfil_asistente').order_by('-is_active', 'username')
+    return render(request, 'asistente/usuarios.html', {'usuarios': usuarios})
 
 
 # ─── WEBHOOK BAILEYS ─────────────────────────────────────────
@@ -1353,12 +1568,13 @@ def webhook_whatsapp(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'JSON inválido'}, status=400)
 
-    perfil = PerfilAsistente.objects.first()
+    perfil, linea = perfil_desde_linea_whatsapp(data.get('linea', 'principal') or 'principal')
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
     numero = data.get('numero', '')
-    linea = data.get('linea', 'principal') or 'principal'
+    linea_interna = data.get('linea', 'principal') or 'principal'
+    linea = linea_whatsapp_publica(linea_interna)
     linea_numero = data.get('linea_numero', '')
     contenido = data.get('mensaje', '')
     tipo = data.get('tipo', 'texto')
@@ -1396,10 +1612,10 @@ def webhook_whatsapp(request):
         origen='entrante',
         contenido=contenido,
     )
-    if debe_leer_whatsapp(linea, es_grupo):
+    if debe_leer_whatsapp(linea_interna, es_grupo):
         anunciar_mensaje_whatsapp(perfil.id, nombre_contacto, numero, contenido, tipo)
 
-    if not debe_responder_whatsapp(linea, es_grupo):
+    if not debe_responder_whatsapp(linea_interna, es_grupo):
         return JsonResponse({
             'respuesta': None,
             'audio_url': None,
@@ -1433,7 +1649,7 @@ def webhook_whatsapp(request):
         respuesta_texto = limpiar_respuesta_whatsapp(respuesta_texto, perfil)
 
     audio_url = None
-    if debe_responder_voz_whatsapp(linea):
+    if debe_responder_voz_whatsapp(linea_interna):
         try:
             audio_url = TTSService().generar_audio(
                 respuesta_texto,
@@ -1477,7 +1693,7 @@ def chat_directo(request):
     except:
         return JsonResponse({'error': 'JSON inválido'}, status=400)
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Configure el perfil primero'}, status=400)
 
@@ -1545,6 +1761,7 @@ def chat_directo(request):
                 target=procesar_comando_desarrollo,
                 mensaje=mensaje,
                 perfil=perfil,
+                owner_id=request.user.id,
             )
             respuesta = f"Listo. Dejé esta tarea trabajando en segundo plano:\n{mensaje}\n\nID: {tarea['id']}"
             audio_url = tts.generar_audio("Listo. Dejé la tarea trabajando en segundo plano.", voz=perfil.voz_preferida, velocidad=perfil.voz_velocidad)
@@ -1697,6 +1914,7 @@ def chat_directo(request):
                 target=procesar_comando_desarrollo,
                 mensaje=comando_extraido,
                 perfil=perfil,
+                owner_id=request.user.id,
             )
             respuesta = (
                 f"{respuesta_limpia}\n\n"
@@ -2002,7 +2220,7 @@ def extraer_parametros_whatsapp_masivo(argumentos):
     }
 
 
-def enviar_whatsapp_masivo(parametros):
+def enviar_whatsapp_masivo(parametros, perfil=None):
     numeros = []
     vistos = set()
     for numero in parametros.get('numeros') or []:
@@ -2012,7 +2230,8 @@ def enviar_whatsapp_masivo(parametros):
             vistos.add(limpio)
 
     mensaje = (parametros.get('mensaje') or '').strip()
-    linea = (parametros.get('linea') or 'yo').strip() or 'yo'
+    linea = linea_whatsapp_publica((parametros.get('linea') or 'yo').strip() or 'yo')
+    linea_envio = linea_whatsapp_interna(perfil, linea)
     max_destinatarios = int(getattr(settings, 'WHATSAPP_BULK_MAX_RECIPIENTS', 50))
 
     if not numeros:
@@ -2038,7 +2257,7 @@ def enviar_whatsapp_masivo(parametros):
         try:
             response = requests.post(
                 f"{url_baileys}/send-message",
-                json={'numero': numero, 'mensaje': mensaje, 'linea': linea},
+                json={'numero': numero, 'mensaje': mensaje, 'linea': linea_envio},
                 timeout=15,
             )
             if response.status_code == 200:
@@ -2203,7 +2422,7 @@ def procesar_comando_desarrollo(mensaje, perfil):
                 parametros = extraer_parametros_whatsapp_masivo(" ".join(args))
             except Exception as exc:
                 return f"No pude leer la lista o el mensaje del envío: {exc}"
-            return enviar_whatsapp_masivo(parametros)
+            return enviar_whatsapp_masivo(parametros, perfil=perfil)
 
         # Comandos de Git
         if comando == "/git":
@@ -2508,7 +2727,7 @@ def datos_destino_whatsapp(conversacion):
 
 
 def mensajes_recientes(request):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'mensajes': []})
 
@@ -2532,7 +2751,7 @@ def mensajes_recientes(request):
 
 
 def whatsapp_conversacion_detalle(request, conversacion_id):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
@@ -2558,7 +2777,7 @@ def whatsapp_conversacion_detalle(request, conversacion_id):
 @csrf_exempt
 @require_http_methods(["POST"])
 def whatsapp_conversacion_enviar(request, conversacion_id):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
@@ -2584,7 +2803,7 @@ def whatsapp_conversacion_enviar(request, conversacion_id):
     try:
         response = requests.post(
             f"{url_baileys}/send-message",
-            json={'numero': numero, 'mensaje': mensaje, 'linea': linea},
+            json={'numero': numero, 'mensaje': mensaje, 'linea': linea_whatsapp_interna(perfil, linea)},
             timeout=15,
         )
         payload = response.json() if response.headers.get('content-type', '').startswith('application/json') else {'detalle': response.text[:300]}
@@ -2607,7 +2826,7 @@ def whatsapp_conversacion_enviar(request, conversacion_id):
 @csrf_exempt
 @require_http_methods(["PATCH", "DELETE"])
 def whatsapp_mensaje_detalle(request, mensaje_id):
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
@@ -2647,7 +2866,7 @@ def whatsapp_estadisticas(request):
     from django.db.models.functions import TruncDate
     from django.utils import timezone
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({
             'labels': [],
@@ -2689,7 +2908,7 @@ def whatsapp_estadisticas(request):
 
 def chat_historial(request):
     """Devuelve el historial de la sesión actual del chat directo."""
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'mensajes': []})
 
@@ -2731,7 +2950,7 @@ def actualizar_voz(request):
     except:
         return JsonResponse({'error': 'JSON inválido'}, status=400)
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
@@ -2746,7 +2965,7 @@ def actualizar_voz(request):
 
 def obtener_voz_actual(request):
     """Obtener la voz configurada actualmente"""
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'voz': 'piper:es_ES-mls_10246-low', 'velocidad': 1.0})
 
@@ -2756,12 +2975,12 @@ def obtener_voz_actual(request):
 # ─── TAREAS EN SEGUNDO PLANO ────────────────────────────────────
 def tareas_listar(request):
     """Lista tareas recientes ejecutadas en segundo plano."""
-    return JsonResponse({'tareas': BackgroundTaskManager.listar()})
+    return JsonResponse({'tareas': BackgroundTaskManager.listar(owner_id=request.user.id)})
 
 
 def tarea_detalle(request, tarea_id):
     """Obtiene el estado y resultado de una tarea."""
-    tarea = BackgroundTaskManager.obtener(tarea_id)
+    tarea = BackgroundTaskManager.obtener(tarea_id, owner_id=request.user.id)
     if not tarea:
         return JsonResponse({'error': 'Tarea no encontrada'}, status=404)
     return JsonResponse({'tarea': tarea})
@@ -2769,7 +2988,7 @@ def tarea_detalle(request, tarea_id):
 
 def tarea_resumen_voz(request, tarea_id):
     """Genera un resumen breve con audio para una tarea finalizada."""
-    tarea = BackgroundTaskManager.obtener(tarea_id)
+    tarea = BackgroundTaskManager.obtener(tarea_id, owner_id=request.user.id)
     if not tarea:
         return JsonResponse({'error': 'Tarea no encontrada'}, status=404)
 
@@ -2781,7 +3000,7 @@ def tarea_resumen_voz(request, tarea_id):
     if resumen_guardado and audio_guardado:
         return JsonResponse({'resumen': resumen_guardado, 'audio_url': audio_guardado, 'tarea': tarea})
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     salida = tarea.get('resultado') if tarea.get('estado') == 'completada' else tarea.get('error')
     resumen = generar_resumen_tarea(tarea, salida or '')
 
@@ -2794,7 +3013,7 @@ def tarea_resumen_voz(request, tarea_id):
         )
 
     BackgroundTaskManager._actualizar(tarea_id, resumen=resumen, audio_url=audio_url)
-    tarea = BackgroundTaskManager.obtener(tarea_id)
+    tarea = BackgroundTaskManager.obtener(tarea_id, owner_id=request.user.id)
     return JsonResponse({'resumen': resumen, 'audio_url': audio_url, 'tarea': tarea})
 
 
@@ -2813,7 +3032,7 @@ def ejecutar_accion_pendiente(request):
     if not comando:
         return JsonResponse({'error': 'Comando vacío'}, status=400)
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Configure el perfil primero'}, status=400)
 
@@ -2848,6 +3067,7 @@ def ejecutar_accion_pendiente(request):
         target=procesar_comando_desarrollo,
         mensaje=comando_real,
         perfil=perfil,
+        owner_id=request.user.id,
     )
 
     if ejecutar_como_bg:
@@ -2947,6 +3167,7 @@ def terminal_ejecutar(request):
             titulo=f"Terminal: {comando}",
             comando=comando,
             target=ejecutar_terminal_background,
+            owner_id=request.user.id,
         )
         return JsonResponse({
             'success': True,
@@ -3071,7 +3292,7 @@ def crear_alarma(request):
     except:
         return JsonResponse({'error': 'JSON inválido'}, status=400)
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
@@ -3079,6 +3300,12 @@ def crear_alarma(request):
         return JsonResponse({'error': 'Faltan campos requeridos: titulo, tipo_accion, programado_para'}, status=400)
 
     try:
+        if tipo_accion == 'whatsapp':
+            parametros = dict(parametros or {})
+            linea_publica = linea_whatsapp_publica(parametros.get('linea') or 'principal')
+            parametros['linea'] = linea_whatsapp_interna(perfil, linea_publica)
+            parametros['linea_publica'] = linea_publica
+
         # Parsear la fecha/hora
         from datetime import datetime, timedelta
 
@@ -3146,7 +3373,7 @@ def crear_alarma(request):
 @require_http_methods(["GET"])
 def listar_alarmas(request):
     """Lista las alarmas/tareas programadas pendientes."""
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'alarmas': []})
 
@@ -3179,7 +3406,7 @@ def listar_alarmas(request):
 @require_http_methods(["POST", "DELETE"])
 def cancelar_alarma(request, tarea_id):
     """Cancela una alarma/tarea programada."""
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
@@ -3198,7 +3425,7 @@ def cancelar_alarma(request, tarea_id):
 @require_http_methods(["GET"])
 def listar_todas_tareas(request):
     """Lista todas las tareas programadas (incluyendo completadas y fallidas)."""
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'tareas': []})
 
@@ -3232,7 +3459,7 @@ def alarmas_resumen(request):
     from django.db.models import Count, Q
     from django.utils import timezone
 
-    perfil = PerfilAsistente.objects.first()
+    perfil = obtener_perfil_usuario(request)
     if not perfil:
         return JsonResponse({'resumen': {}})
 

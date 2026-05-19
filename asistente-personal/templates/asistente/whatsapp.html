@@ -256,10 +256,13 @@
 </div>
 
 <script>
-let lineas = JSON.parse(localStorage.getItem('wa_lineas') || '[]');
-if (lineas.length === 1 && lineas[0] === 'principal' && !localStorage.getItem('wa_lineas_usuario')) {
+const WA_STORAGE_PREFIX = 'u{{ request.user.id }}';
+const WA_LINEAS_KEY = `wa_lineas_${WA_STORAGE_PREFIX}`;
+const WA_LINEAS_USUARIO_KEY = `wa_lineas_usuario_${WA_STORAGE_PREFIX}`;
+let lineas = JSON.parse(localStorage.getItem(WA_LINEAS_KEY) || '[]');
+if (lineas.length === 1 && lineas[0] === 'principal' && !localStorage.getItem(WA_LINEAS_USUARIO_KEY)) {
     lineas = [];
-    localStorage.setItem('wa_lineas', JSON.stringify(lineas));
+    localStorage.setItem(WA_LINEAS_KEY, JSON.stringify(lineas));
 }
 const lineStatus = {};
 const lineConfig = {};
@@ -270,8 +273,8 @@ let bulkMode = 'mensaje';
 let bulkFormat = 'texto';
 
 function guardarLineas() {
-    localStorage.setItem('wa_lineas_usuario', '1');
-    localStorage.setItem('wa_lineas', JSON.stringify(lineas));
+    localStorage.setItem(WA_LINEAS_USUARIO_KEY, '1');
+    localStorage.setItem(WA_LINEAS_KEY, JSON.stringify(lineas));
 }
 
 function actualizarSelectorLineasMasivo() {

@@ -550,6 +550,11 @@
                 </svg>
                 <span class="hidden sm:inline">Configurar</span>
             </a>
+            {% if request.user.is_superuser %}
+            <a href="/usuarios/" class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition">
+                <span>Usuarios</span>
+            </a>
+            {% endif %}
             <form method="post" action="/logout/" class="m-0">
                 {% csrf_token %}
                 <button type="submit" class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition">

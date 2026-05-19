@@ -1473,7 +1473,7 @@ class BackgroundTaskManager:
             print(f"[BackgroundTaskManager] No se pudo guardar historial: {exc}")
 
     @classmethod
-    def crear(cls, titulo, comando, target, *args, **kwargs):
+    def crear(cls, titulo, comando, target, *args, owner_id=None, **kwargs):
         cls._ensure_loaded()
         task_id = str(uuid.uuid4())
         ahora = datetime.now().isoformat(timespec="seconds")
@@ -1484,6 +1484,7 @@ class BackgroundTaskManager:
             "estado": "pendiente",
             "resultado": "",
             "error": "",
+            "owner_id": str(owner_id) if owner_id is not None else None,
             "creado_en": ahora,
             "iniciado_en": None,
             "finalizado_en": None,
@@ -1528,17 +1529,21 @@ class BackgroundTaskManager:
                 cls._persist()
 
     @classmethod
-    def obtener(cls, task_id):
+    def obtener(cls, task_id, owner_id=None):
         cls._ensure_loaded()
         with cls._lock:
             task = cls._tasks.get(task_id)
+            if task and owner_id is not None and task.get("owner_id") != str(owner_id):
+                return None
             return task.copy() if task else None
 
     @classmethod
-    def listar(cls, limite=20):
+    def listar(cls, limite=20, owner_id=None):
         cls._ensure_loaded()
         with cls._lock:
             tasks = list(cls._tasks.values())
+        if owner_id is not None:
+            tasks = [task for task in tasks if task.get("owner_id") == str(owner_id)]
         tasks.sort(key=lambda item: item["creado_en"], reverse=True)
         return [task.copy() for task in tasks[:limite]]
 
@@ -2271,6 +2276,7 @@ class SchedulerService:
         import random
 
         linea = (parametros.get('linea') or 'principal').strip() or 'principal'
+        linea_publica = (parametros.get('linea_publica') or linea).strip() or linea
         formato = (parametros.get('formato') or 'texto').strip().lower()
         url_baileys = getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002'
         numeros_raw = parametros.get('numeros') or []
@@ -2357,7 +2363,7 @@ class SchedulerService:
                     if perfil:
                         conversacion, _ = Conversacion.objects.get_or_create(
                             perfil=perfil,
-                            numero_whatsapp=f"{linea}:{numero}"[:80],
+                            numero_whatsapp=f"{linea_publica}:{numero}"[:80],
                         )
                         Mensaje.objects.create(
                             conversacion=conversacion,
@@ -2381,7 +2387,7 @@ class SchedulerService:
         actualizar_progreso(total, '', 'terminada')
 
         resumen = (
-            f"Campaña WhatsApp por línea {linea}. "
+            f"Campaña WhatsApp por línea {linea_publica}. "
             f"Formato: {formato}. Enviados: {len(enviados)} de {len(numeros)}. "
             f"Espera configurada: {delay_min}-{delay_max} {delay_unit}."
         )
