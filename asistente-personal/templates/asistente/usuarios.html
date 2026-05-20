@@ -1,0 +1,517 @@
+{% extends 'asistente/base.html' %}
+{% block title %}Usuarios - Asistente{% endblock %}
+{% block content %}
+<style>
+    .users-page {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 0 16px;
+    }
+
+    .panel {
+        background: rgba(15, 23, 42, .85);
+        border: 1px solid rgba(148, 163, 184, .12);
+        border-radius: 16px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, .25);
+        overflow: hidden;
+    }
+
+    .panel-header {
+        padding: 24px;
+        border-bottom: 1px solid rgba(148, 163, 184, .1);
+    }
+
+    .panel-body {
+        padding: 24px;
+    }
+
+    h1 {
+        font-size: 24px;
+        font-weight: 600;
+        color: #f1f5f9;
+        margin-bottom: 4px;
+    }
+
+    .subtitle {
+        font-size: 13px;
+        color: #64748b;
+    }
+
+    /* Tabla */
+    .table-container {
+        overflow-x: auto;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    th {
+        text-align: left;
+        padding: 14px 16px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid rgba(148, 163, 184, .1);
+    }
+
+    td {
+        padding: 16px;
+        border-bottom: 1px solid rgba(148, 163, 184, .05);
+        color: #e2e8f0;
+        font-size: 14px;
+    }
+
+    tr:last-child td {
+        border-bottom: none;
+    }
+
+    tr:hover td {
+        background: rgba(148, 163, 184, .03);
+    }
+
+    /* Inputs */
+    .field {
+        background: rgba(2, 6, 23, .8);
+        border: 1px solid rgba(148, 163, 184, .2);
+        border-radius: 8px;
+        color: #f1f5f9;
+        padding: 10px 12px;
+        font-size: 14px;
+        width: 100%;
+        outline: none;
+        transition: all 0.2s;
+    }
+    .field:focus {
+        border-color: #6366f1;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, .15);
+    }
+
+    /* Botones */
+    .btn {
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+    .btn:hover {
+        transform: translateY(-1px);
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #6366f1, #3b82f6);
+        color: white;
+    }
+    .btn-primary:hover {
+        box-shadow: 0 4px 12px rgba(99, 102, 241, .4);
+    }
+
+    .btn-secondary {
+        background: rgba(30, 41, 59, .8);
+        border: 1px solid rgba(148, 163, 184, .15);
+        color: #e2e8f0;
+    }
+    .btn-secondary:hover {
+        background: rgba(30, 41, 59, 1);
+    }
+
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+
+    /* Badges */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+    }
+    .badge-active {
+        background: rgba(34, 197, 94, .15);
+        color: #86efac;
+    }
+    .badge-inactive {
+        background: rgba(239, 68, 68, .15);
+        color: #fca5a5;
+    }
+    .badge-admin {
+        background: rgba(251, 191, 36, .12);
+        color: #fcd34d;
+    }
+    .badge-staff {
+        background: rgba(100, 116, 139, .15);
+        color: #cbd5e1;
+    }
+
+    /* Switch */
+    .switch {
+        position: relative;
+        width: 44px;
+        height: 24px;
+    }
+    .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    .switch-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(100, 116, 139, .3);
+        border-radius: 24px;
+        transition: .3s;
+    }
+    .switch-slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background: #94a3b8;
+        border-radius: 50%;
+        transition: .3s;
+    }
+    .switch input:checked + .switch-slider {
+        background: #22c55e;
+    }
+    .switch input:checked + .switch-slider:before {
+        transform: translateX(20px);
+        background: white;
+    }
+
+    /* Actions cell */
+    .actions-cell {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    /* Form inline */
+    .form-inline {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    /* Modal/Dialog */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, .7);
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .modal-overlay.active {
+        display: flex;
+    }
+    .modal {
+        background: rgba(15, 23, 42, .95);
+        border: 1px solid rgba(148, 163, 184, .15);
+        border-radius: 16px;
+        padding: 24px;
+        width: 90%;
+        max-width: 500px;
+    }
+    .modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #f1f5f9;
+        margin-bottom: 20px;
+    }
+    .modal-field {
+        margin-bottom: 16px;
+    }
+    .modal-field label {
+        display: block;
+        font-size: 12px;
+        color: #94a3b8;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+    }
+    .modal-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        margin-top: 24px;
+    }
+
+    /* Messages */
+    .message {
+        padding: 12px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        margin-bottom: 16px;
+    }
+    .message-success {
+        background: rgba(34, 197, 94, .12);
+        border: 1px solid rgba(74, 222, 128, .2);
+        color: #bbf7d0;
+    }
+    .message-error {
+        background: rgba(239, 68, 68, .12);
+        border: 1px solid rgba(248, 113, 113, .2);
+        color: #fecaca;
+    }
+
+    /* Link */
+    .link {
+        color: #818cf8;
+        text-decoration: none;
+        font-size: 13px;
+    }
+    .link:hover {
+        text-decoration: underline;
+    }
+
+    /* Empty state */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: #64748b;
+    }
+
+    /* Checkbox */
+    input[type="checkbox"] {
+        accent-color: #6366f1;
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+</style>
+
+<div class="users-page">
+    <!-- Header -->
+    <div class="panel mb-6">
+        <div class="panel-header flex justify-between items-center">
+            <div>
+                <h1>Usuarios</h1>
+                <p class="subtitle">Gestión de cuentas del sistema</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="/admin/auth/user/" class="link">Admin Django</a>
+                <button class="btn btn-primary" onclick="openModal()">+ Nuevo Usuario</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+    <div class="panel mb-6">
+        <div class="panel-body">
+            {% for message in messages %}
+            <div class="message {% if message.tags == 'error' %}message-error{% else %}message-success{% endif %}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Users Table -->
+    <div class="panel">
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 50px;"></th>
+                        <th>Usuario</th>
+                        <th>Empresa</th>
+                        <th>Correo</th>
+                        <th>Roles</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for usuario in usuarios %}
+                    <tr>
+                        <td>
+                            <form method="post" id="form-{{ usuario.id }}" style="display:none;">
+                                {% csrf_token %}
+                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" class="form-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="accion" value="actualizar">
+                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
+                                <input name="username" class="field" style="width: 140px;" value="{{ usuario.username }}" required>
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" class="form-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="accion" value="actualizar">
+                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
+                                <input name="nombre_empresa" class="field" style="width: 160px;" value="{{ usuario.perfil_asistente.nombre_usuario|default:'' }}">
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" class="form-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="accion" value="actualizar">
+                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
+                                <input name="email" type="email" class="field" style="width: 200px;" value="{{ usuario.email }}">
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" class="form-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="accion" value="actualizar">
+                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" name="is_staff" {% if usuario.is_staff %}checked{% endif %}>
+                                    <span style="font-size: 12px; color: #94a3b8;">Staff</span>
+                                </label>
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" id="toggle-form-{{ usuario.id }}" style="display:none;">
+                                {% csrf_token %}
+                                <input type="hidden" name="accion" value="toggle_activo">
+                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
+                            </form>
+                            <div class="flex items-center gap-2">
+                                <label class="switch">
+                                    <input type="checkbox" {% if usuario.is_active %}checked{% endif %} onchange="document.getElementById('toggle-form-{{ usuario.id }}').submit();">
+                                    <span class="switch-slider"></span>
+                                </label>
+                                {% if usuario.is_active %}
+                                <span class="badge badge-active">Activo</span>
+                                {% else %}
+                                <span class="badge badge-inactive">Inactivo</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="actions-cell">
+                                <button class="btn btn-secondary btn-sm" onclick="openPasswordModal({{ usuario.id }})">Contraseña</button>
+                                <button class="btn btn-primary btn-sm" onclick="saveUser({{ usuario.id }})">Guardar</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7">
+                            <div class="empty-state">
+                                No hay usuarios registrados
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nuevo Usuario -->
+<div class="modal-overlay" id="newUserModal">
+    <div class="modal">
+        <h2 class="modal-title">Crear nuevo usuario</h2>
+        <form method="post" id="newUserForm">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="crear">
+            <div class="modal-field">
+                <label>Usuario *</label>
+                <input name="username" class="field" placeholder="Ej. juan.perez" required>
+            </div>
+            <div class="modal-field">
+                <label>Empresa</label>
+                <input name="nombre_empresa" class="field" placeholder="Ej. Mi Empresa S.A.">
+            </div>
+            <div class="modal-field">
+                <label>Correo</label>
+                <input name="email" type="email" class="field" placeholder="correo@ejemplo.com">
+            </div>
+            <div class="modal-field">
+                <label>Contraseña *</label>
+                <input name="password" type="password" class="field" placeholder="••••••••" required>
+            </div>
+            <div class="modal-field">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" name="is_staff">
+                    <span style="color: #e2e8f0; font-size: 14px;">Staff</span>
+                </label>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Crear</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Cambiar Contraseña -->
+<div class="modal-overlay" id="passwordModal">
+    <div class="modal">
+        <h2 class="modal-title">Cambiar contraseña</h2>
+        <form method="post" id="passwordForm">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="password">
+            <input type="hidden" name="user_id" id="passwordUserId">
+            <div class="modal-field">
+                <label>Nueva contraseña</label>
+                <input name="password" type="password" class="field" placeholder="••••••••" required>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closePasswordModal()">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Cambiar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openModal() {
+    document.getElementById('newUserModal').classList.add('active');
+}
+
+function closeModal() {
+    document.getElementById('newUserModal').classList.remove('active');
+}
+
+function openPasswordModal(userId) {
+    document.getElementById('passwordUserId').value = userId;
+    document.getElementById('passwordModal').classList.add('active');
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordModal').classList.remove('active');
+}
+
+function saveUser(userId) {
+    const form = document.getElementById('form-' + userId);
+    form.querySelector('input[name="accion"]').value = 'actualizar';
+    form.submit();
+}
+
+// Cerrar modales al hacer clic fuera
+document.getElementById('newUserModal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+});
+document.getElementById('passwordModal').addEventListener('click', function(e) {
+    if (e.target === this) closePasswordModal();
+});
+</script>
+{% endblock %}

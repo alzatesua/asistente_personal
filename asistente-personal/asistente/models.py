@@ -1,8 +1,16 @@
 from django.db import models
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from datetime import datetime
 
 class PerfilAsistente(models.Model):
+    usuario = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='perfil_asistente',
+        null=True,
+        blank=True,
+    )
     nombre_asistente = models.CharField(max_length=100, default='Asistente')
     nombre_usuario = models.CharField(max_length=100)
     cv_archivo = models.FileField(upload_to='cvs/', null=True, blank=True)
@@ -15,11 +23,18 @@ class PerfilAsistente(models.Model):
     )
     voz_velocidad = models.FloatField(default=1.0, help_text='Velocidad de reproducción (0.5 - 2.0)')
     comandos_personalizados = models.TextField(null=True, blank=True, help_text='JSON con comandos adicionales permitidos')
+    meta_graph_api_version = models.CharField(max_length=20, default='v25.0', blank=True)
+    meta_page_id = models.CharField(max_length=100, blank=True, default='')
+    meta_page_access_token = models.TextField(blank=True, default='')
+    meta_app_secret = models.CharField(max_length=255, blank=True, default='')
+    meta_verify_token = models.CharField(max_length=255, blank=True, default='')
+    meta_webhook_url = models.URLField(max_length=500, blank=True, default='')
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
 
     class Meta:
         verbose_name = 'Perfil del Asistente'
+        verbose_name_plural = 'Perfiles del Asistente'
 
     def __str__(self):
         return f"{self.nombre_asistente} - {self.nombre_usuario}"

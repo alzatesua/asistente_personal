@@ -31,24 +31,26 @@ class GLMService:
 
     def construir_prompt_sistema(self, perfil, canal='web', contacto=None):
         contacto = contacto or {}
-        if canal == 'whatsapp':
+        if canal in ('whatsapp', 'facebook'):
             nombre_contacto = contacto.get('nombre') or 'un contacto'
             numero_contacto = contacto.get('numero') or 'numero desconocido'
             linea = contacto.get('linea') or 'principal'
             linea_numero = contacto.get('linea_numero') or 'numero de linea desconocido'
-            return f"""Actuas como redactor invisible de WhatsApp para {perfil.nombre_usuario}.
+            canal_nombre = 'Facebook / Messenger' if canal == 'facebook' else 'WhatsApp'
+            unidad = 'pagina' if canal == 'facebook' else 'linea'
+            return f"""Actuas como redactor invisible de {canal_nombre} para {perfil.nombre_usuario}.
 
 Contexto del canal:
 - Este mensaje NO lo escribe {perfil.nombre_usuario}.
-- El mensaje viene de {nombre_contacto} ({numero_contacto}), una persona que tiene contacto con {perfil.nombre_usuario} o que le escribio por WhatsApp.
-- Estas respondiendo desde la linea de WhatsApp "{linea}" ({linea_numero}).
+- El mensaje viene de {nombre_contacto} ({numero_contacto}), una persona que tiene contacto con {perfil.nombre_usuario} o que le escribio por {canal_nombre}.
+- Estas respondiendo desde la {unidad} "{linea}" ({linea_numero}).
 - Tu funcion principal es escribir exactamente como si fueras {perfil.nombre_usuario}, en primera persona, respondiendo en su nombre.
 - {perfil.nombre_asistente} es solo el nombre interno del sistema. Nunca digas que eres {perfil.nombre_asistente}, un asistente, una IA, un bot o un sistema.
 - No firmes como {perfil.nombre_asistente}. No saludes diciendo "soy {perfil.nombre_asistente}". No expliques que estas ayudando a contestar.
 - No trates al remitente como si fuera {perfil.nombre_usuario}; tratalo como un contacto externo.
-- No actues como asistente de desarrollo en WhatsApp, salvo que el propio {perfil.nombre_usuario} te haya configurado explicitamente para eso.
-- No ejecutes comandos, no abras aplicaciones, no diagnostiques el PC y no menciones comandos internos por WhatsApp.
-- Responde de forma natural, breve y humana, adecuada para una conversacion de WhatsApp, como una persona real.
+- No actues como asistente de desarrollo en {canal_nombre}, salvo que el propio {perfil.nombre_usuario} te haya configurado explicitamente para eso.
+- No ejecutes comandos, no abras aplicaciones, no diagnostiques el PC y no menciones comandos internos por {canal_nombre}.
+- Responde de forma natural, breve y humana, adecuada para una conversacion de {canal_nombre}, como una persona real.
 - Si el mensaje recibido es "[Audio]", no digas que no puedes escucharlo. Responde algo natural como {perfil.nombre_usuario}, por ejemplo: "Dame un momentico y lo escucho bien.".
 - Si el contacto pide informacion que no sabes, no inventes. Pide un dato adicional o responde de forma prudente.
 - Si el contacto pregunta algo personal o sensible, evita revelar informacion privada y responde de forma prudente en primera persona.
@@ -1473,7 +1475,7 @@ class BackgroundTaskManager:
             print(f"[BackgroundTaskManager] No se pudo guardar historial: {exc}")
 
     @classmethod
-    def crear(cls, titulo, comando, target, *args, **kwargs):
+    def crear(cls, titulo, comando, target, *args, owner_id=None, **kwargs):
         cls._ensure_loaded()
         task_id = str(uuid.uuid4())
         ahora = datetime.now().isoformat(timespec="seconds")
@@ -1484,6 +1486,7 @@ class BackgroundTaskManager:
             "estado": "pendiente",
             "resultado": "",
             "error": "",
+            "owner_id": str(owner_id) if owner_id is not None else None,
             "creado_en": ahora,
             "iniciado_en": None,
             "finalizado_en": None,
@@ -1528,17 +1531,21 @@ class BackgroundTaskManager:
                 cls._persist()
 
     @classmethod
-    def obtener(cls, task_id):
+    def obtener(cls, task_id, owner_id=None):
         cls._ensure_loaded()
         with cls._lock:
             task = cls._tasks.get(task_id)
+            if task and owner_id is not None and task.get("owner_id") != str(owner_id):
+                return None
             return task.copy() if task else None
 
     @classmethod
-    def listar(cls, limite=20):
+    def listar(cls, limite=20, owner_id=None):
         cls._ensure_loaded()
         with cls._lock:
             tasks = list(cls._tasks.values())
+        if owner_id is not None:
+            tasks = [task for task in tasks if task.get("owner_id") == str(owner_id)]
         tasks.sort(key=lambda item: item["creado_en"], reverse=True)
         return [task.copy() for task in tasks[:limite]]
 
@@ -2271,6 +2278,7 @@ class SchedulerService:
         import random
 
         linea = (parametros.get('linea') or 'principal').strip() or 'principal'
+        linea_publica = (parametros.get('linea_publica') or linea).strip() or linea
         formato = (parametros.get('formato') or 'texto').strip().lower()
         url_baileys = getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002'
         numeros_raw = parametros.get('numeros') or []
@@ -2357,7 +2365,7 @@ class SchedulerService:
                     if perfil:
                         conversacion, _ = Conversacion.objects.get_or_create(
                             perfil=perfil,
-                            numero_whatsapp=f"{linea}:{numero}"[:80],
+                            numero_whatsapp=f"{linea_publica}:{numero}"[:80],
                         )
                         Mensaje.objects.create(
                             conversacion=conversacion,
@@ -2381,7 +2389,7 @@ class SchedulerService:
         actualizar_progreso(total, '', 'terminada')
 
         resumen = (
-            f"Campaña WhatsApp por línea {linea}. "
+            f"Campaña WhatsApp por línea {linea_publica}. "
             f"Formato: {formato}. Enviados: {len(enviados)} de {len(numeros)}. "
             f"Espera configurada: {delay_min}-{delay_max} {delay_unit}."
         )

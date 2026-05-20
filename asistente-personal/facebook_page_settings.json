@@ -1,0 +1,9 @@
+{
+  "u1": {
+    "auto_mensajes": true,
+    "auto_comentarios": true,
+    "leer_mensajes": false,
+    "leer_comentarios": false,
+    "responder_comentarios_publicamente": true
+  }
+}
