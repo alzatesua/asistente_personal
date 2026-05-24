@@ -1,0 +1,480 @@
+{% extends 'asistente/base.html' %}
+{% block title %}Citas - Asistente{% endblock %}
+{% block content %}
+<style>
+    body { background: linear-gradient(135deg, #020617, #08111f 48%, #030712); color: #e5e7eb; }
+    nav { background: rgba(2, 6, 23, 0.84) !important; border-color: rgba(148, 163, 184, 0.12) !important; }
+    .page { width: min(1200px, calc(100vw - 32px)); margin: 0 auto; text-align: left; }
+    .card { background: rgba(15,23,42,.78); border: 1px solid rgba(148,163,184,.13); border-radius: 18px; box-shadow: 0 18px 45px rgba(0,0,0,.24); }
+    .muted { color: #94a3b8; }
+    .input { background: rgba(2,6,23,.72); color: #f8fafc; border: 1px solid rgba(148,163,184,.18); border-radius: 12px; }
+    .btn { border-radius: 12px; background: linear-gradient(135deg,#2563eb,#0f766e); color: white; font-weight: 700; }
+    .cita { background: rgba(30,41,59,.78); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; overflow: hidden; }
+    .cita:hover { background: rgba(30,41,59,.88); }
+    .badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .badge-pendiente { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-confirmada { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .badge-completada { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge-cancelada { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .categoria-titulo { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; margin-bottom: 12px; }
+    .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+    .btn-ghost { background: transparent; border: 1px solid rgba(148,163,184,.3); color: #94a3b8; }
+    .btn-ghost:hover { background: rgba(148,163,184,.1); color: #e5e7eb; }
+    .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; min-width: 0; }
+    .page-head h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.1; }
+    .summary-layout { display: flex; align-items: center; gap: 16px; min-width: 0; }
+    .summary-main { flex: 1; min-width: 0; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 14px; margin-top: 12px; }
+    .cita-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; cursor: pointer; list-style: none; min-width: 0; }
+    .cita-summary::-webkit-details-marker { display: none; }
+    .cita-summary::after { content: "+"; color: #94a3b8; flex: 0 0 auto; font-weight: 800; line-height: 1; }
+    .cita[open] .cita-summary::after { content: "-"; }
+    .cita-summary-main { flex: 1; min-width: 0; }
+    .cita-summary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+    .cita-summary-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: #94a3b8; font-size: 12px; margin-top: 4px; }
+    .cita-layout { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+    .cita-body { padding: 0 14px 14px; }
+    .cita-main { flex: 1; min-width: 0; }
+    .cita-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+    .cita-title { overflow-wrap: anywhere; min-width: 0; }
+    .cita-meta-line { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; font-size: 13px; color: #9ca3af; }
+    .cita-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-top: 12px; }
+    .cita-info { background: rgba(15,23,42,.42); border: 1px solid rgba(148,163,184,.1); border-radius: 10px; padding: 9px 10px; min-width: 0; }
+    .cita-info-label { display: block; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 3px; }
+    .cita-info-value { color: #e5e7eb; font-size: 13px; overflow-wrap: anywhere; }
+    .cita-contexto { grid-column: span 2; }
+    .cita-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .cita-description { color: #64748b; font-size: 13px; margin-top: 10px; overflow-wrap: anywhere; }
+    .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+    .pagination-info { color: #94a3b8; font-size: 13px; }
+    .pagination-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .page-btn { min-height: 36px; padding: 7px 12px; border-radius: 10px; border: 1px solid rgba(148,163,184,.24); background: rgba(15,23,42,.72); color: #e5e7eb; font-size: 13px; font-weight: 700; }
+    .page-btn:hover:not(:disabled) { background: rgba(51,65,85,.9); }
+    .page-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    @media (max-width: 768px) {
+        .page { width: min(100%, calc(100vw - 20px)); }
+        .card { padding: 16px; border-radius: 16px; }
+        .page-head,
+        .summary-layout,
+        .cita-layout {
+            align-items: stretch;
+            flex-direction: column;
+        }
+        .page-head a,
+        .cita-actions button {
+            width: 100%;
+        }
+        .summary-grid,
+        .cita-info-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .cita-actions {
+            width: 100%;
+        }
+        .cita-summary {
+            align-items: stretch;
+        }
+        .pagination,
+        .pagination-actions {
+            align-items: stretch;
+            flex-direction: column;
+            width: 100%;
+        }
+        .page-btn {
+            width: 100%;
+        }
+        .cita-contexto {
+            grid-column: 1 / -1;
+        }
+    }
+
+    @media (max-width: 430px) {
+        .page { width: min(100%, calc(100vw - 14px)); }
+        .card { padding: 12px; }
+        .summary-grid,
+        .cita-info-grid {
+            grid-template-columns: 1fr;
+        }
+        .badge {
+            width: 100%;
+            text-align: center;
+        }
+        .btn-sm {
+            padding: 8px 10px;
+        }
+    }
+</style>
+
+<div class="page">
+    <div class="page-head">
+        <div>
+            <p class="muted text-sm">Gestión de citas y reuniones agendadas</p>
+            <h1 class="font-bold text-white">Mis Citas</h1>
+        </div>
+        <div class="flex gap-3">
+            <a href="/chat/" class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm">Ir al chat</a>
+        </div>
+    </div>
+
+    <!-- Resumen de citas -->
+    <section class="card p-5 mb-4">
+        <div class="summary-layout">
+            <div class="summary-main">
+                <h2 class="text-lg font-bold text-white">Resumen</h2>
+                <div class="summary-grid">
+                    <div>
+                        <span id="resumen-total" class="text-2xl font-bold text-white">0</span>
+                        <p class="text-xs muted">Total</p>
+                    </div>
+                    <div>
+                        <span id="resumen-pendientes" class="text-2xl font-bold text-amber-400">0</span>
+                        <p class="text-xs muted">Pendientes</p>
+                    </div>
+                    <div>
+                        <span id="resumen-confirmadas" class="text-2xl font-bold text-blue-400">0</span>
+                        <p class="text-xs muted">Confirmadas</p>
+                    </div>
+                    <div>
+                        <span id="resumen-hoy" class="text-2xl font-bold text-green-400">0</span>
+                        <p class="text-xs muted">Hoy</p>
+                    </div>
+                    <div>
+                        <span id="resumen-proximas" class="text-2xl font-bold text-purple-400">0</span>
+                        <p class="text-xs muted">Próximas</p>
+                    </div>
+                </div>
+            </div>
+            <span id="badge-citas" class="text-xs px-3 py-1 rounded-full bg-slate-500/30 text-slate-400">0 citas</span>
+        </div>
+    </section>
+
+    <!-- Lista de citas -->
+    <section class="card p-5">
+        <h2 class="text-lg font-bold text-white mb-4">Todas las citas</h2>
+        <div id="lista-citas">
+            <p class="py-8 text-center muted">Cargando citas...</p>
+        </div>
+        <div id="paginacion-citas" class="pagination"></div>
+    </section>
+</div>
+
+<script>
+let citasCache = [];
+let citasIdsConocidos = new Set();
+let paginaActual = 1;
+let paginacionCache = null;
+let ultimaCitaCreadaId = null;
+let audioContextCitas = null;
+const citasPorPagina = 6;
+const intervaloRevisionCitasMs = 5000;
+
+async function prepararAudioCitas() {
+    try {
+        if (!audioContextCitas) {
+            audioContextCitas = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContextCitas.state === 'suspended') {
+            await audioContextCitas.resume();
+        }
+    } catch(e) {
+        console.error('[CITAS] No se pudo preparar audio:', e);
+    }
+}
+
+// Función para reproducir sonido de nueva cita
+async function reproducirSonidoNuevaCita() {
+    try {
+        await prepararAudioCitas();
+        if (!audioContextCitas || audioContextCitas.state !== 'running') {
+            mostrarNotificacionNuevaCita();
+            return;
+        }
+
+        // Tono ascendente (Do-Mi-Sol) similar al backend
+        const notas = [523.25, 659.25, 783.99]; // Do, Mi, Sol
+        const duracion = 0.15;
+
+        let startTime = audioContextCitas.currentTime;
+
+        for (let i = 0; i < notas.length; i++) {
+            const osc = audioContextCitas.createOscillator();
+            const gain = audioContextCitas.createGain();
+
+            osc.connect(gain);
+            gain.connect(audioContextCitas.destination);
+
+            osc.type = 'sine';
+            osc.frequency.value = notas[i];
+
+            // Envolvente suave
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(0.2, startTime + 0.02);
+            gain.gain.linearRampToValueAtTime(0.15, startTime + duracion - 0.03);
+            gain.gain.linearRampToValueAtTime(0, startTime + duracion);
+
+            osc.start(startTime);
+            osc.stop(startTime + duracion);
+
+            startTime += duracion;
+        }
+
+        // Mostrar notificación visual también
+        mostrarNotificacionNuevaCita();
+
+    } catch(e) {
+        console.error('[CITAS] Error reproduciendo sonido:', e);
+    }
+}
+
+function mostrarNotificacionNuevaCita() {
+    // Crear una notificación temporal visual
+    const notif = document.createElement('div');
+    notif.className = 'fixed top-4 right-4 bg-gradient-to-r from-blue-500 to-teal-500 text-white px-6 py-4 rounded-xl shadow-2xl z-50 animate-pulse';
+    notif.innerHTML = `
+        <div class="flex items-center gap-3">
+            <span class="text-2xl"></span>
+            <div>
+                <p class="font-bold">¡Nueva Cita!</p>
+                <p class="text-sm opacity-90">Tienes una cita agendada</p>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(notif);
+
+    // Remover después de 4 segundos
+    setTimeout(() => {
+        notif.style.opacity = '0';
+        notif.style.transition = 'opacity 0.5s';
+        setTimeout(() => notif.remove(), 500);
+    }, 4000);
+}
+
+async function cargarCitas(pagina = paginaActual) {
+    try {
+        const res = await fetch(`/api/citas/?page=${pagina}&per_page=${citasPorPagina}`);
+        const data = await res.json();
+        const nuevasCitas = data.citas || [];
+
+        // Detectar nuevas citas comparando IDs
+        const nuevosIds = nuevasCitas.map(c => c.id);
+        const idsNuevos = nuevosIds.filter(id => !citasIdsConocidos.has(id));
+
+        // Si hay nuevas citas (y no es la primera carga)
+        if (idsNuevos.length > 0 && citasIdsConocidos.size > 0) {
+            console.log('[CITAS] ¡Nuevas citas detectadas!', idsNuevos);
+            reproducirSonidoNuevaCita();
+        }
+
+        // Actualizar cache y IDs conocidos
+        citasCache = nuevasCitas;
+        citasIdsConocidos = new Set(nuevosIds);
+        paginacionCache = data.paginacion || null;
+        paginaActual = paginacionCache ? paginacionCache.pagina : pagina;
+
+        actualizarResumen(data.resumen || {});
+        renderizarCitas();
+        renderizarPaginacion();
+    } catch(e) {
+        console.error('[CITAS] Error cargando:', e);
+        document.getElementById('lista-citas').innerHTML = '<p class="py-8 text-center text-red-300">No se pudieron cargar las citas.</p>';
+        document.getElementById('paginacion-citas').innerHTML = '';
+    }
+}
+
+async function revisarCitaNueva() {
+    try {
+        const res = await fetch('/api/citas/?orden=creadas&page=1&per_page=1');
+        const data = await res.json();
+        const ultima = (data.citas || [])[0];
+
+        if (!ultima) {
+            return;
+        }
+
+        if (ultimaCitaCreadaId === null) {
+            ultimaCitaCreadaId = ultima.id;
+            return;
+        }
+
+        if (ultima.id !== ultimaCitaCreadaId) {
+            ultimaCitaCreadaId = ultima.id;
+            reproducirSonidoNuevaCita();
+            cargarCitas(paginaActual === 1 ? 1 : paginaActual);
+        }
+    } catch(e) {
+        console.error('[CITAS] Error revisando nuevas citas:', e);
+    }
+}
+
+function actualizarResumen(resumen) {
+    document.getElementById('resumen-total').textContent = resumen.total || 0;
+    document.getElementById('resumen-pendientes').textContent = resumen.pendientes || 0;
+    document.getElementById('resumen-confirmadas').textContent = resumen.confirmadas || 0;
+    document.getElementById('resumen-hoy').textContent = resumen.hoy || 0;
+    document.getElementById('resumen-proximas').textContent = resumen.proximas || 0;
+
+    const badge = document.getElementById('badge-citas');
+    const total = resumen.total || 0;
+    badge.textContent = `${total} cita${total !== 1 ? 's' : ''}`;
+    badge.className = total > 0
+        ? 'text-xs px-3 py-1 rounded-full bg-blue-500/30 text-blue-300'
+        : 'text-xs px-3 py-1 rounded-full bg-slate-500/30 text-slate-400';
+}
+
+function renderizarCitas() {
+    const lista = document.getElementById('lista-citas');
+
+    if (!citasCache.length) {
+        lista.innerHTML = '<p class="py-8 text-center muted">No hay citas agendadas.</p>';
+        return;
+    }
+
+    lista.innerHTML = citasCache.map(renderizarCita).join('');
+}
+
+function renderizarPaginacion() {
+    const contenedor = document.getElementById('paginacion-citas');
+    if (!paginacionCache || paginacionCache.total_paginas <= 1) {
+        contenedor.innerHTML = '';
+        return;
+    }
+
+    const inicio = ((paginacionCache.pagina - 1) * paginacionCache.por_pagina) + 1;
+    const fin = Math.min(paginacionCache.total, paginacionCache.pagina * paginacionCache.por_pagina);
+
+    contenedor.innerHTML = `
+        <p class="pagination-info">Mostrando ${inicio}-${fin} de ${paginacionCache.total}</p>
+        <div class="pagination-actions">
+            <button class="page-btn" onclick="cambiarPagina(${paginacionCache.anterior || 1})" ${!paginacionCache.tiene_anterior ? 'disabled' : ''}>Anterior</button>
+            <span class="pagination-info">Pagina ${paginacionCache.pagina} de ${paginacionCache.total_paginas}</span>
+            <button class="page-btn" onclick="cambiarPagina(${paginacionCache.siguiente || paginacionCache.total_paginas})" ${!paginacionCache.tiene_siguiente ? 'disabled' : ''}>Siguiente</button>
+        </div>
+    `;
+}
+
+function cambiarPagina(pagina) {
+    if (!paginacionCache || pagina === paginaActual) return;
+    cargarCitas(pagina);
+}
+
+function renderizarCita(cita) {
+    const badgeClass = `badge-${cita.estado}`;
+    const hora = new Date(cita.fecha_hora);
+    const horaFormateada = hora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const fechaFormateada = hora.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    const nombre = cita.contacto_nombre || 'Sin nombre';
+    const telefono = cita.contacto_numero || 'Sin telefono';
+    const contexto = cita.contexto_reunion || cita.descripcion || cita.titulo || 'Sin contexto';
+
+    return `<details class="cita">
+        <summary class="cita-summary">
+            <div class="cita-summary-main">
+                <div class="cita-summary-row">
+                    <h3 class="cita-title font-semibold text-white">${escapeHtml(cita.titulo)}</h3>
+                    <span class="badge ${badgeClass}">${cita.estado_display}</span>
+                </div>
+                <div class="cita-summary-meta">
+                    <span>${escapeHtml(nombre)}</span>
+                    <span>${fechaFormateada}</span>
+                    <span>${horaFormateada}</span>
+                </div>
+            </div>
+        </summary>
+        <div class="cita-body">
+        <div class="cita-layout">
+            <div class="cita-main">
+                ${cita.ubicacion ? `<p class="text-sm text-gray-500 mt-1">${escapeHtml(cita.ubicacion)}</p>` : ''}
+                <div class="cita-info-grid">
+                    <div class="cita-info">
+                        <span class="cita-info-label">Persona</span>
+                        <span class="cita-info-value">${escapeHtml(nombre)}</span>
+                    </div>
+                    <div class="cita-info cita-contexto">
+                        <span class="cita-info-label">Contexto</span>
+                        <span class="cita-info-value">${escapeHtml(contexto)}</span>
+                    </div>
+                    <div class="cita-info">
+                        <span class="cita-info-label">Hora</span>
+                        <span class="cita-info-value">${escapeHtml(fechaFormateada)} ${escapeHtml(horaFormateada)}</span>
+                    </div>
+                    <div class="cita-info">
+                        <span class="cita-info-label">Telefono</span>
+                        <span class="cita-info-value">${escapeHtml(telefono)}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="cita-actions">
+                ${cita.estado === 'pendiente' ? `<button onclick="confirmarCita(${cita.id})" class="btn-ghost btn-sm">Confirmar</button>` : ''}
+                ${cita.estado !== 'cancelada' && cita.estado !== 'completada' ? `<button onclick="cancelarCita(${cita.id})" class="btn-ghost btn-sm text-red-400 hover:text-red-300">Cancelar</button>` : ''}
+                ${cita.estado === 'confirmada' || cita.estado === 'pendiente' ? `<button onclick="completarCita(${cita.id})" class="btn-ghost btn-sm">Completar</button>` : ''}
+            </div>
+        </div>
+        ${cita.descripcion ? `<p class="cita-description">${escapeHtml(cita.descripcion)}</p>` : ''}
+        </div>
+    </details>`;
+}
+
+async function confirmarCita(id) {
+    if (!confirm('¿Confirmar esta cita?')) return;
+
+    try {
+        const res = await fetch(`/api/citas/${id}/confirmar/`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            cargarCitas();
+        } else {
+            alert('Error: ' + (data.error || 'No se pudo confirmar'));
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function cancelarCita(id) {
+    if (!confirm('¿Cancelar esta cita?')) return;
+
+    try {
+        const res = await fetch(`/api/citas/${id}/cancelar/`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            cargarCitas();
+        } else {
+            alert('Error: ' + (data.error || 'No se pudo cancelar'));
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function completarCita(id) {
+    if (!confirm('¿Marcar esta cita como completada?')) return;
+
+    try {
+        const res = await fetch(`/api/citas/${id}/completar/`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            cargarCitas();
+        } else {
+            alert('Error: ' + (data.error || 'No se pudo completar'));
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+function escapeHtml(texto) {
+    return String(texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Cargar citas al inicio
+cargarCitas();
+revisarCitaNueva();
+
+window.addEventListener('pointerdown', prepararAudioCitas, { once: true });
+window.addEventListener('keydown', prepararAudioCitas, { once: true });
+
+// Revisar novedades casi en tiempo real sin recargar toda la lista
+setInterval(revisarCitaNueva, intervaloRevisionCitasMs);
+</script>
+{% endblock %}

@@ -121,9 +121,57 @@
     .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
     .modal-close { width: 38px; height: 38px; border-radius: 12px; border: 1px solid rgba(148,163,184,.18); background: rgba(15,23,42,.82); color: #cbd5e1; font-size: 18px; font-weight: 800; }
     .empty-state { border: 1px dashed rgba(148,163,184,.2); border-radius: 14px; padding: 24px; text-align: center; color: #8fa3bd; background: rgba(15,23,42,.45); }
-    @media (max-width: 1280px) { .grid { grid-template-columns: minmax(340px, .9fr) minmax(0, 1.1fr); } .right-stack { grid-column: 1 / -1; } }
-    @media (max-width: 980px) { .hero, .grid { grid-template-columns: 1fr; } .stats { min-width: 0; } .messages-list { max-height: none; } .right-stack { grid-column: auto; } }
-    @media (max-width: 560px) { .page { width: min(100%, calc(100vw - 24px)); } .control-grid, .read-grid, .action-grid, .secondary-actions, .quick-actions, .line-form, .stats, .bulk-grid { grid-template-columns: 1fr; } .line-summary { grid-template-columns: auto minmax(0, 1fr) auto auto; } .expand-label { display: none; } .bulk-field.full { grid-column: auto; } }
+
+    @media (max-width: 1400px) {
+        .grid { grid-template-columns: minmax(300px, .8fr) minmax(380px, 1.2fr) minmax(320px, .85fr); gap: 16px; }
+    }
+
+    @media (max-width: 1280px) {
+        .grid { grid-template-columns: minmax(300px, .85fr) minmax(0, 1.15fr); gap: 16px; }
+        .right-stack { grid-column: 1 / -1; }
+        .hero-title { font-size: clamp(26px, 5vw, 36px); }
+    }
+
+    @media (max-width: 980px) {
+        .hero, .grid { grid-template-columns: 1fr; }
+        .stats { min-width: 0; }
+        .messages-list { max-height: none; }
+        .right-stack { grid-column: auto; }
+        .hero-title { font-size: clamp(24px, 6vw, 32px); }
+    }
+
+    @media (max-width: 640px) {
+        .page { width: min(100%, calc(100vw - 16px)); }
+        .card { padding: 16px; border-radius: 16px; }
+        .hero { margin-bottom: 16px; }
+        .hero-copy { font-size: 14px; }
+        .stat-value { font-size: 18px; }
+        .line-summary { padding: 10px 12px; }
+        .line-avatar { width: 32px; height: 32px; font-size: 14px; }
+        .conversation-summary { padding: 11px 12px; }
+        .chat-bubble { padding: 9px 10px; }
+        .btn-line { padding: 7px 9px; font-size: 12px; min-height: 36px; }
+        .modal-panel { padding: 14px; }
+    }
+
+    @media (max-width: 560px) {
+        .control-grid, .read-grid, .action-grid, .secondary-actions, .quick-actions, .line-form, .stats, .bulk-grid { grid-template-columns: 1fr; }
+        .line-summary { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+        .expand-label { display: none; }
+        .bulk-field.full { grid-column: auto; }
+        .hero-title { font-size: clamp(22px, 7vw, 30px); }
+        .panel-title { font-size: 15px; }
+        .stats { gap: 8px; }
+        .stat-card { padding: 12px; }
+    }
+
+    @media (max-width: 400px) {
+        .page { width: min(100%, calc(100vw - 12px)); }
+        .card { padding: 12px; }
+        .line-title { font-size: 15px; }
+        .message-name { font-size: 14px; }
+        .chat-bubble { max-width: min(88%, 280px); }
+    }
 </style>
 
 <div class="page">

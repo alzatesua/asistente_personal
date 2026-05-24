@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth import get_user_model
-from django.http import JsonResponse
+from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 
@@ -9,6 +9,17 @@ from .models import PerfilAsistente
 
 
 DESKTOP_HEADER_VALUE = 'ventana-flotante'
+
+SECTION_PATHS = (
+    ('chat', ('/chat/', '/api/chat/', '/api/mensajes/')),
+    ('tareas', ('/tareas/', '/api/tareas/', '/api/alarmas/', '/api/acciones/', '/api/scheduler/')),
+    ('citas', ('/citas/', '/api/citas/', '/api/test/cita-detectar/')),
+    ('whatsapp', ('/whatsapp/', '/api/whatsapp/')),
+    ('facebook', ('/facebook/', '/api/facebook/')),
+    ('voz', ('/voz/', '/api/voces/', '/api/voz/')),
+    ('configurar', ('/configurar/',)),
+    ('usuarios', ('/usuarios/',)),
+)
 
 
 def _es_loopback(request):
@@ -56,6 +67,24 @@ def autenticar_ventana_local(request):
     return True
 
 
+def seccion_para_path(path):
+    for seccion, prefijos in SECTION_PATHS:
+        if path.startswith(prefijos):
+            return seccion
+    return ''
+
+
+def usuario_puede_ver_seccion(user, seccion):
+    if not seccion:
+        return True
+
+    perfil = getattr(user, 'perfil_asistente', None)
+    if not perfil:
+        return seccion == 'configurar'
+
+    return perfil.puede_ver_seccion(seccion)
+
+
 class AuthRequiredMiddleware:
     """Require an active Django user session for the private assistant UI/API."""
 
@@ -71,6 +100,7 @@ class AuthRequiredMiddleware:
             logout_url,
             '/webhook/whatsapp/',
             '/webhook/facebook/',
+            '/privacidad/',
             settings.STATIC_URL,
             settings.MEDIA_URL,
         )
@@ -85,6 +115,11 @@ class AuthRequiredMiddleware:
             return redirect(f'{login_url}?inactive=1')
 
         if request.user.is_authenticated:
+            seccion = seccion_para_path(path)
+            if not usuario_puede_ver_seccion(request.user, seccion):
+                if path.startswith('/api/'):
+                    return JsonResponse({'error': 'No tienes permiso para ver esta seccion'}, status=403)
+                return HttpResponseForbidden('No tienes permiso para ver esta seccion.')
             return self.get_response(request)
 
         if path.startswith('/api/'):

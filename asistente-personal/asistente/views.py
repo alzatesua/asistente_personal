@@ -10,11 +10,13 @@ import base64
 import requests
 import random
 import re
-from datetime import datetime
+import numpy as np
+from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 from django.shortcuts import render, redirect
 from django.http import HttpResponse, JsonResponse
 from django.contrib import messages
+from django.utils import timezone
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -22,8 +24,16 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.conf import settings
-from .models import PerfilAsistente, Conversacion, Mensaje, ComandoEjecutado, TareaProgramada
-from .services import GLMService, ComandoService, TTSService, DeveloperTools, PCActionService, BackgroundTaskManager, WebResearchService, SchedulerService
+from .models import (
+    PerfilAsistente,
+    Conversacion,
+    Mensaje,
+    ComandoEjecutado,
+    TareaProgramada,
+    SECCIONES_DISPONIBLES,
+    SECCIONES_PERMITIDAS_DEFAULT,
+)
+from .services import GLMService, TTSService, PCActionService, BackgroundTaskManager, WebResearchService, SchedulerService
 from audio_visual_state import notify_audio_start, notify_audio_stop
 import PyPDF2
 import io
@@ -137,9 +147,16 @@ def perfil_desde_linea_whatsapp(linea):
     match = re.match(r'^u(\d+)-', linea)
     if match:
         return PerfilAsistente.objects.filter(id=match.group(1)).first(), linea_whatsapp_publica(linea)
-    if PerfilAsistente.objects.filter(usuario__isnull=False).count() == 1:
-        return PerfilAsistente.objects.filter(usuario__isnull=False).first(), linea
-    return None, linea
+    # Buscar cualquier perfil disponible (con o sin usuario)
+    if PerfilAsistente.objects.count() == 1:
+        return PerfilAsistente.objects.first(), linea
+    # Prioridad: perfiles con usuario
+    perfil_con_usuario = PerfilAsistente.objects.filter(usuario__isnull=False).first()
+    if perfil_con_usuario:
+        return perfil_con_usuario, linea
+    # Si no hay perfiles con usuario, usar el primero disponible
+    perfil = PerfilAsistente.objects.first()
+    return perfil, linea
 
 
 def obtener_session_key(request):
@@ -397,10 +414,15 @@ def verificar_firma_meta(request, perfil):
     if not app_secret:
         return True
     firma = request.headers.get('X-Hub-Signature-256', '')
+    print(f"[FIRMA DEBUG] firma recibida: {firma}", flush=True)
+    print(f"[FIRMA DEBUG] app_secret guardado: {app_secret}", flush=True)
     if not firma.startswith('sha256='):
+        print("[FIRMA DEBUG] firma no empieza con sha256=", flush=True)
         return False
     digest = hmac.new(app_secret.encode('utf-8'), request.body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(firma, f'sha256={digest}')
+    resultado = hmac.compare_digest(firma, f'sha256={digest}')
+    print(f"[FIRMA DEBUG] resultado verificacion: {resultado}", flush=True)
+    return resultado
 
 
 def enviar_mensaje_facebook(perfil, psid, texto):
@@ -543,6 +565,10 @@ def debe_responder_voz_whatsapp(linea):
     return obtener_config_linea(linea)['responder_voz']
 
 
+def debe_responder_audio_por_mensaje(linea, es_audio_entrante=False):
+    return debe_responder_voz_whatsapp(linea) and bool(es_audio_entrante)
+
+
 def borrar_sesion_baileys_local(linea):
     carpeta = baileys_auth_folder(linea)
     if carpeta.exists():
@@ -664,6 +690,83 @@ def reproducir_audio_local(ruta_audio):
         return False
     finally:
         notify_audio_stop(visual_token)
+
+
+def reproducir_sonido_cita():
+    """Reproduce un tono agradable cuando se agenda una cita."""
+    try:
+        import pygame
+        import numpy as np
+
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=44100, size=-16, channels=1)
+
+        # Tono ascendente (Do-Mi-Sol) para sonar positivo
+        duracion = 0.25
+        frecuencias = [523.25, 659.25, 783.99]  # Do, Mi, Sol
+
+        for freq in frecuencias:
+            n_samples = int(44100 * duracion)
+            t = np.linspace(0, duracion, n_samples, False)
+
+            # Generar onda seno con envolvente suave
+            envolvente = np.concatenate([
+                np.linspace(0, 1, int(n_samples * 0.1)),  # Attack
+                np.ones(int(n_samples * 0.7)),           # Sustain
+                np.linspace(1, 0, int(n_samples * 0.2))   # Release
+            ])
+            wave = np.sin(2 * np.pi * freq * t) * 0.3 * envolvente
+            sound = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
+            sound.play()
+            pygame.time.wait(int(duracion * 1000))
+
+        return True
+    except ImportError:
+        # Fallback sin numpy: usar pygame con sonido básico
+        try:
+            import pygame
+
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+
+            # Intentar usar archivos de sonido
+            sonidos_cita = [
+                settings.MEDIA_ROOT / 'sonidos' / 'cita_confirmada.mp3',
+                settings.MEDIA_ROOT / 'sonidos' / 'ding.mp3',
+                settings.MEDIA_ROOT / 'sonidos' / 'success.mp3',
+            ]
+
+            for sonido in sonidos_cita:
+                if sonido.exists():
+                    return reproducir_audio_local(str(sonido))
+
+            # Generar tono simple sin numpy
+            try:
+                from array import array
+                from struct import pack
+
+                pygame.mixer.init(frequency=44100, size=-16, channels=1)
+                sonido_buffer = array('h')
+
+                for freq in [523, 659, 783]:  # Do, Mi, Sol
+                    for i in range(44100 // 4):  # 0.25 segundos
+                        valor = int(32767 * 0.3 * np.sin(2 * np.pi * freq * i / 44100))
+                        sonido_buffer.append(valor)
+
+                sonido = pygame.mixer.Sound(buffer=sonido_buffer)
+                sonido.play()
+                pygame.time.wait(750)  # Esperar a que termine
+                return True
+            except Exception:
+                pass
+
+        except Exception as exc:
+            print(f"[CITA] No pude reproducir sonido: {exc}")
+
+    except Exception as exc:
+        print(f"[CITA] Error generando tono de cita: {exc}")
+
+    return False
 
 
 def anunciar_mensaje_whatsapp(perfil_id, nombre_contacto, numero, contenido, tipo):
@@ -799,6 +902,17 @@ def respuesta_chat_json(conversacion, respuesta, audio_url=None, **extra):
         'audio_url': audio_url,
         'session_memory': True,
         'conversacion_id': conversacion.id,
+    }
+    data.update(extra)
+    return JsonResponse(data)
+
+
+def respuesta_silenciosa_json(**extra):
+    data = {
+        'respuesta': None,
+        'audio_url': None,
+        'auto_respuesta': False,
+        'sin_modelo_activo': True,
     }
     data.update(extra)
     return JsonResponse(data)
@@ -957,15 +1071,68 @@ def respuesta_basica_local(mensaje_usuario, perfil):
 
 
 def extraer_texto_cv(archivo):
+    """Extrae texto del CV/PDF y lo limpia de notas internas."""
+    import re
+
     try:
         if archivo.name.endswith('.pdf'):
             reader = PyPDF2.PdfReader(io.BytesIO(archivo.read()))
-            texto = ""
-            for page in reader.pages:
-                texto += page.extract_text()
-            return texto
+            paginas = []
+            for idx, page in enumerate(reader.pages, start=1):
+                texto_pagina = page.extract_text() or ''
+                texto_pagina = texto_pagina.strip()
+                if texto_pagina:
+                    paginas.append(f"[Pagina {idx}]\n{texto_pagina}")
+            texto = "\n\n".join(paginas)
         else:
-            return archivo.read().decode('utf-8', errors='ignore')
+            texto = archivo.read().decode('utf-8', errors='ignore')
+
+        # Limpiar el texto extraído de notas internas
+        if texto:
+            # Eliminar notas entre *(...)* o [...]
+            texto = re.sub(r'\*\([^)]*\)\*', '', texto)  # *(nota)*
+            texto = re.sub(r'\[[^\]]*\*(?:.|\n)*?\*\]', '', texto)  # [*(nota)*]
+            texto = re.sub(r'\[[^\]]*nota[^\]]*\]', '', texto, flags=re.IGNORECASE)  # [nota...]
+
+            # Eliminar líneas con frases típicas de notas internas (incluyendo "aquí iría")
+            patrones_notas = [
+                r'.*nota para ti.*',
+                r'.*en una situación real.*',
+                r'.*adjuntarías el.*',
+                r'.*esto es un ejemplo.*',
+                r'.*placeholder.*',
+                r'.*aquí iría.*',
+                r'.*aqui iría.*',
+                r'.*aquí iria.*',
+                r'.*[aA]quí.*[iI]ría.*',
+                r'.*\[Aquí.*',
+                r'.*\[Imagen.*',
+                r'.*\[PDF.*',
+                r'.*\[aAquí.*PDF.*\].*',
+                r'.*tarjeta de precios.*aquí.*',
+                r'.*\[DEBUG\].*',
+                r'.*\[INFO\].*',
+            ]
+
+            for patron in patrones_notas:
+                texto = re.sub(patron, '', texto, flags=re.IGNORECASE | re.MULTILINE)
+
+            # Eliminar emojis seguidos de texto entre corchetes (comunes en plantillas)
+            texto = re.sub(r'🖼️\s*\*?\[.*?\]\*?', '', texto)  # 🖼️ [texto]
+            texto = re.sub(r'📄\s*\*?\[.*?\]\*?', '', texto)  # 📄 [texto]
+            texto = re.sub(r'📋\s*\*?\[.*?\]\*?', '', texto)  # 📋 [texto]
+            texto = re.sub(r'[📊📈📉🖼️📎📄📋]\s*\*?\[.*?\]\*?', '', texto)  # Cualquier emoji de documento + [texto]
+
+            # Eliminar cualquier línea que sea solo un emoji seguido de corchetes
+            texto = re.sub(r'^\s*[^\w\s]\s*\[.*?\]\s*$', '', texto, flags=re.MULTILINE)
+
+            # Eliminar líneas vacías múltiples
+            texto = re.sub(r'\n\s*\n\s*\n+', '\n\n', texto)
+
+            return texto.strip()
+
+        return texto
+
     except Exception as e:
         return f"No se pudo extraer el texto: {str(e)}"
 
@@ -1545,9 +1712,11 @@ def whatsapp_programar_masivo(request):
 
     try:
         if 'T' in programado_para_str:
-            programado_para = datetime.strptime(programado_para_str, '%Y-%m-%dT%H:%M')
+            naive_dt = datetime.strptime(programado_para_str, '%Y-%m-%dT%H:%M')
+            programado_para = timezone.make_aware(naive_dt)
         elif ' ' in programado_para_str:
-            programado_para = datetime.strptime(programado_para_str, '%Y-%m-%d %H:%M')
+            naive_dt = datetime.strptime(programado_para_str, '%Y-%m-%d %H:%M')
+            programado_para = timezone.make_aware(naive_dt)
         else:
             return JsonResponse({'error': 'Usa fecha y hora completas'}, status=400)
     except ValueError:
@@ -1752,12 +1921,23 @@ def configurar_perfil(request):
 
 
 def usuarios_page(request):
-    if not request.user.is_superuser:
+    from django.db.models import Count, Q
+    from django.db.models.functions import TruncDate
+    from asistente.models import Cita
+
+    perfil_actual = getattr(request.user, 'perfil_asistente', None)
+    if not perfil_actual or not perfil_actual.puede_ver_seccion('usuarios'):
         return JsonResponse({'error': 'No autorizado'}, status=403)
 
     if request.method == 'POST':
         accion = request.POST.get('accion')
         user_id = request.POST.get('user_id')
+        secciones_enviadas = request.POST.get('secciones_enviadas') == '1'
+        modelos_enviados = request.POST.get('modelos_enviados') == '1'
+        secciones_permitidas = [
+            seccion for seccion in request.POST.getlist('secciones')
+            if seccion in dict(SECCIONES_DISPONIBLES)
+        ]
 
         if accion == 'crear':
             username = (request.POST.get('username') or '').strip()
@@ -1765,6 +1945,8 @@ def usuarios_page(request):
             password = request.POST.get('password') or ''
             nombre_empresa = (request.POST.get('nombre_empresa') or username).strip()
             is_staff = request.POST.get('is_staff') == 'on'
+            usar_groq_respuestas_normales = request.POST.get('usar_groq_respuestas_normales') == 'on'
+            usar_groq_lexico_complejo = request.POST.get('usar_groq_lexico_complejo') == 'on'
 
             if not username or not password:
                 messages.error(request, 'El usuario y la contraseña son obligatorios.')
@@ -1782,6 +1964,9 @@ def usuarios_page(request):
                     usuario=usuario,
                     nombre_usuario=nombre_empresa,
                     nombre_asistente='Asistente',
+                    secciones_permitidas=secciones_permitidas if secciones_enviadas else list(SECCIONES_PERMITIDAS_DEFAULT),
+                    usar_groq_respuestas_normales=usar_groq_respuestas_normales,
+                    usar_groq_lexico_complejo=usar_groq_lexico_complejo,
                 )
                 messages.success(request, f'Usuario {username} creado correctamente.')
             return redirect('usuarios_page')
@@ -1810,7 +1995,15 @@ def usuarios_page(request):
                     defaults={'nombre_usuario': nombre_empresa, 'nombre_asistente': 'Asistente'},
                 )
                 perfil.nombre_usuario = nombre_empresa
-                perfil.save(update_fields=['nombre_usuario', 'actualizado_en'])
+                update_fields = ['nombre_usuario', 'actualizado_en']
+                if modelos_enviados:
+                    perfil.usar_groq_respuestas_normales = request.POST.get('usar_groq_respuestas_normales') == 'on'
+                    perfil.usar_groq_lexico_complejo = request.POST.get('usar_groq_lexico_complejo') == 'on'
+                    update_fields.extend(['usar_groq_respuestas_normales', 'usar_groq_lexico_complejo'])
+                if secciones_enviadas:
+                    perfil.secciones_permitidas = secciones_permitidas
+                    update_fields.append('secciones_permitidas')
+                perfil.save(update_fields=update_fields)
                 messages.success(request, f'Usuario {username} actualizado.')
 
         elif accion == 'password':
@@ -1833,8 +2026,180 @@ def usuarios_page(request):
 
         return redirect('usuarios_page')
 
-    usuarios = User.objects.select_related('perfil_asistente').order_by('-is_active', 'username')
-    return render(request, 'asistente/usuarios.html', {'usuarios': usuarios})
+    usuarios = list(User.objects.select_related('perfil_asistente').order_by('-is_active', 'username'))
+    hoy = timezone.localdate()
+    inicio = hoy - timedelta(days=6)
+    dias = [inicio + timedelta(days=i) for i in range(7)]
+
+    for usuario in usuarios:
+        perfil = getattr(usuario, 'perfil_asistente', None)
+        uso = {
+            'total': 0,
+            'whatsapp': 0,
+            'web': 0,
+            'desktop': 0,
+            'facebook': 0,
+            'conversaciones': 0,
+            'contactos': 0,
+            'entrantes_total': 0,
+            'salientes_total': 0,
+            'texto': 0,
+            'voz': 0,
+            'imagen': 0,
+            'citas': 0,
+            'citas_pendientes': 0,
+            'citas_confirmadas': 0,
+            'citas_completadas': 0,
+            'citas_canceladas': 0,
+            'tareas': 0,
+            'tareas_pendientes': 0,
+            'tareas_completadas': 0,
+            'tareas_fallidas': 0,
+            'tareas_canceladas': 0,
+            'dias': [],
+            'ultima_actividad': 'Sin actividad',
+            'chart': {
+                'entrantes': '',
+                'salientes': '',
+                'area_entrantes': '',
+                'area_salientes': '',
+                'puntos_entrantes': [],
+                'puntos_salientes': [],
+            },
+            'dominante': 'Sin actividad',
+        }
+
+        if perfil:
+            mensajes = Mensaje.objects.filter(conversacion__perfil=perfil)
+            conversaciones = Conversacion.objects.filter(perfil=perfil)
+            citas_qs = Cita.objects.filter(perfil=perfil)
+            tareas_qs = TareaProgramada.objects.filter(perfil=perfil)
+            uso['total'] = mensajes.count()
+            uso['web'] = mensajes.filter(conversacion__numero_whatsapp__startswith='web:').count()
+            uso['desktop'] = mensajes.filter(conversacion__numero_whatsapp__startswith='desktop:').count()
+            uso['facebook'] = mensajes.filter(conversacion__numero_whatsapp__startswith='facebook:').count()
+            uso['whatsapp'] = mensajes.exclude(
+                Q(conversacion__numero_whatsapp__startswith='web:') |
+                Q(conversacion__numero_whatsapp__startswith='desktop:') |
+                Q(conversacion__numero_whatsapp__startswith='facebook:')
+            ).count()
+            uso['conversaciones'] = conversaciones.count()
+            uso['contactos'] = conversaciones.exclude(
+                Q(numero_whatsapp__startswith='web:') |
+                Q(numero_whatsapp__startswith='desktop:')
+            ).values('numero_whatsapp').distinct().count()
+            uso['entrantes_total'] = mensajes.filter(origen='entrante').count()
+            uso['salientes_total'] = mensajes.filter(origen='saliente').count()
+            uso['texto'] = mensajes.filter(tipo='texto').count()
+            uso['voz'] = mensajes.filter(tipo='voz').count()
+            uso['imagen'] = mensajes.filter(tipo='imagen').count()
+            uso['citas'] = citas_qs.count()
+            uso['citas_pendientes'] = citas_qs.filter(estado='pendiente').count()
+            uso['citas_confirmadas'] = citas_qs.filter(estado='confirmada').count()
+            uso['citas_completadas'] = citas_qs.filter(estado='completada').count()
+            uso['citas_canceladas'] = citas_qs.filter(estado='cancelada').count()
+            uso['tareas'] = tareas_qs.count()
+            uso['tareas_pendientes'] = tareas_qs.filter(estado='pendiente').count()
+            uso['tareas_completadas'] = tareas_qs.filter(estado='completada').count()
+            uso['tareas_fallidas'] = tareas_qs.filter(estado='fallida').count()
+            uso['tareas_canceladas'] = tareas_qs.filter(estado='cancelada').count()
+            ultimo = mensajes.order_by('-creado_en').first()
+            if ultimo:
+                uso['ultima_actividad'] = timezone.localtime(ultimo.creado_en).strftime('%Y-%m-%d %H:%M')
+
+            por_dia = mensajes.filter(creado_en__date__gte=inicio).annotate(
+                dia=TruncDate('creado_en')
+            ).values('dia', 'origen').annotate(total=Count('id'))
+            mapa_dias = {(item['dia'], item['origen']): item['total'] for item in por_dia}
+            entrantes = [mapa_dias.get((dia, 'entrante'), 0) for dia in dias]
+            salientes = [mapa_dias.get((dia, 'saliente'), 0) for dia in dias]
+            uso['dias'] = [
+                {
+                    'fecha': dia.strftime('%d/%m'),
+                    'entrantes': entrantes[idx],
+                    'salientes': salientes[idx],
+                    'total': entrantes[idx] + salientes[idx],
+                }
+                for idx, dia in enumerate(dias)
+            ]
+            maximo = max(entrantes + salientes) if entrantes or salientes else 0
+
+            def puntos_chart(valores):
+                if not valores:
+                    return []
+                ancho = 150
+                alto = 54
+                paso = ancho / max(1, len(valores) - 1)
+                return [
+                    {
+                        'x': round(idx * paso, 2),
+                        'y': round(alto - ((valor / maximo) * 42) - 6, 2) if maximo else alto - 6,
+                        'valor': valor,
+                    }
+                    for idx, valor in enumerate(valores)
+                ]
+
+            puntos_entrantes = puntos_chart(entrantes)
+            puntos_salientes = puntos_chart(salientes)
+
+            def path_linea(puntos):
+                if not puntos:
+                    return ''
+                if len(puntos) == 1:
+                    return f"M {puntos[0]['x']} {puntos[0]['y']}"
+                partes = [f"M {puntos[0]['x']} {puntos[0]['y']}"]
+                for idx in range(1, len(puntos)):
+                    previo = puntos[idx - 1]
+                    actual = puntos[idx]
+                    medio_x = round((previo['x'] + actual['x']) / 2, 2)
+                    partes.append(f"Q {previo['x']} {previo['y']} {medio_x} {round((previo['y'] + actual['y']) / 2, 2)}")
+                    partes.append(f"T {actual['x']} {actual['y']}")
+                return ' '.join(partes)
+
+            def path_area(puntos):
+                if not puntos:
+                    return ''
+                linea = path_linea(puntos)
+                return f"{linea} L {puntos[-1]['x']} 60 L {puntos[0]['x']} 60 Z"
+
+            uso['chart'] = {
+                'entrantes': path_linea(puntos_entrantes),
+                'salientes': path_linea(puntos_salientes),
+                'area_entrantes': path_area(puntos_entrantes),
+                'area_salientes': path_area(puntos_salientes),
+                'puntos_entrantes': puntos_entrantes,
+                'puntos_salientes': puntos_salientes,
+            }
+
+            canales = [
+                ('WhatsApp', uso['whatsapp']),
+                ('Web', uso['web']),
+                ('Desktop', uso['desktop']),
+                ('Facebook', uso['facebook']),
+            ]
+            uso['dominante'] = max(canales, key=lambda item: item[1])[0] if uso['total'] else 'Sin actividad'
+
+        usuario.uso_bot = uso
+
+    usuarios_uso = {
+        str(usuario.id): {
+            'username': usuario.username,
+            'empresa': getattr(getattr(usuario, 'perfil_asistente', None), 'nombre_usuario', '') or '',
+            'email': usuario.email or '',
+            'is_staff': usuario.is_staff,
+            'secciones_permitidas': getattr(getattr(usuario, 'perfil_asistente', None), 'secciones_permitidas', []) or [],
+            'usar_groq_respuestas_normales': bool(getattr(getattr(usuario, 'perfil_asistente', None), 'usar_groq_respuestas_normales', False)),
+            'usar_groq_lexico_complejo': bool(getattr(getattr(usuario, 'perfil_asistente', None), 'usar_groq_lexico_complejo', False)),
+            **usuario.uso_bot,
+        }
+        for usuario in usuarios
+    }
+
+    return render(request, 'asistente/usuarios.html', {
+        'usuarios': usuarios,
+        'usuarios_uso': usuarios_uso,
+        'secciones_disponibles': SECCIONES_DISPONIBLES,
+    })
 
 
 # ─── WEBHOOK FACEBOOK / META ─────────────────────────────────
@@ -1883,7 +2248,99 @@ def webhook_facebook(request):
             eventos.append(evento)
             if conf['leer_mensajes']:
                 anunciar_mensaje_whatsapp(perfil.id, conversacion.nombre_contacto, sender_id, contenido, 'texto')
+            # ─── DETECCIÓN DE INTENCIÓN DE AGENDAMIENTO ─────────────────────
+            from .services import CitaService
+
+            cita_service = CitaService()
+
+            print(f"[CITA DEBUG Facebook] Analizando mensaje: {contenido[:100]}...")
+
+            if cita_service.detectar_intencion_agendamiento(contenido, conversacion=conversacion):
+                print(f"[CITA] ✅ Intención de agendamiento detectada en mensaje de Facebook: {contenido[:50]}...")
+
+                datos_cita = cita_service.extraer_datos_cita(contenido, perfil, conversacion=conversacion)
+
+                print(f"[CITA] Datos extraídos: {datos_cita}")
+
+                if datos_cita.get('completo') and datos_cita.get('fecha_hora'):
+                    try:
+                        # Crear la cita (con validación de conflictos)
+                        cita, resultado = cita_service.crear_cita(conversacion, datos_cita, linea_whatsapp='facebook')
+
+                        if resultado['exito']:
+                            # Generar respuesta de confirmación
+                            respuesta_texto = cita_service.formatear_confirmacion_cita(cita)
+
+                            # Reproducir sonido de confirmación
+                            try:
+                                reproducir_sonido_cita()
+                            except Exception as sonido_exc:
+                                print(f"[CITA] No pude reproducir sonido: {sonido_exc}")
+
+                            # Enviar respuesta de confirmación por Facebook
+                            ok, payload = enviar_mensaje_facebook(perfil, sender_id, respuesta_texto)
+                            Mensaje.objects.create(
+                                conversacion=conversacion,
+                                tipo='texto',
+                                origen='saliente',
+                                contenido=respuesta_texto,
+                                respondido=ok,
+                            )
+
+                            evento['auto_respuesta'] = ok
+                            evento['cita_agendada'] = True
+                            evento['cita_id'] = cita.id
+
+                            print(f"[CITA] Cita creada exitosamente: {cita.id}")
+                        else:
+                            # Hay conflicto - enviar mensaje de conflicto con horarios disponibles
+                            respuesta_texto = resultado['mensaje']
+
+                            # Enviar respuesta de conflicto por Facebook
+                            ok, payload = enviar_mensaje_facebook(perfil, sender_id, respuesta_texto)
+                            Mensaje.objects.create(
+                                conversacion=conversacion,
+                                tipo='texto',
+                                origen='saliente',
+                                contenido=respuesta_texto,
+                                respondido=ok,
+                            )
+
+                            evento['auto_respuesta'] = ok
+                            evento['cita_conflicto'] = True
+                            if resultado.get('dia_completo'):
+                                evento['dia_completo'] = True
+                            if resultado['conflicto'] and resultado['conflicto'].get('cita_conflicto'):
+                                evento['cita_conflicto_id'] = resultado['conflicto']['cita_conflicto'].id
+
+                            print(f"[CITA] Conflicto detectado: {respuesta_texto[:100]}...")
+
+                        continue  # No generar respuesta automática adicional
+
+                    except Exception as cita_exc:
+                        print(f"[CITA] Error creando cita: {cita_exc}")
+                        # Continuar con respuesta normal del chat
+                else:
+                    print(f"[CITA] ⚠️ Datos incompletos para crear cita. completo={datos_cita.get('completo')}, fecha_hora={datos_cita.get('fecha_hora')}")
+                    respuesta_texto = (
+                        "Claro, lo coordinamos con gusto. "
+                        "¿Prefieres que lo revisemos por llamada, WhatsApp o una reunión por Meet?"
+                    )
+                    ok, payload = enviar_mensaje_facebook(perfil, sender_id, respuesta_texto)
+                    Mensaje.objects.create(
+                        conversacion=conversacion,
+                        tipo='texto',
+                        origen='saliente',
+                        contenido=respuesta_texto,
+                        respondido=ok,
+                    )
+                    evento['auto_respuesta'] = ok
+                    evento['cita_datos_incompletos'] = True
+                    continue
+            # ─── FIN DETECCIÓN DE AGENDAMIENTO ─────────────────────────────
+
             if conf['auto_mensajes']:
+                print(f'[Facebook] Generando respuesta para mensaje: {contenido[:50]}')
                 historial = construir_historial(conversacion, limite=20)[:-1]
                 respuesta = GLMService().chat(
                     contenido,
@@ -1892,8 +2349,15 @@ def webhook_facebook(request):
                     canal='facebook',
                     contacto={'nombre': conversacion.nombre_contacto, 'numero': sender_id, 'linea': 'Messenger', 'linea_numero': recipient_id},
                 )
+                print(f'[Facebook] Respuesta generada: {respuesta[:100]}...')
                 respuesta = limpiar_respuesta_whatsapp(respuesta, perfil)
+                if not respuesta.strip():
+                    evento['auto_respuesta'] = False
+                    evento['sin_modelo_activo'] = True
+                    continue
+                print(f'[Facebook] Enviando a Facebook API - sender_id: {sender_id}')
                 ok, payload = enviar_mensaje_facebook(perfil, sender_id, respuesta)
+                print(f'[Facebook] Resultado envio: ok={ok}, payload={payload}')
                 Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='saliente', contenido=respuesta, respondido=ok)
                 evento['auto_respuesta'] = ok
                 if not ok:
@@ -1926,6 +2390,10 @@ def webhook_facebook(request):
                     contacto={'nombre': autor, 'numero': comment_id, 'linea': 'Comentarios', 'linea_numero': page_id},
                 )
                 respuesta = limpiar_respuesta_whatsapp(respuesta, perfil)
+                if not respuesta.strip():
+                    evento['auto_respuesta'] = False
+                    evento['sin_modelo_activo'] = True
+                    continue
                 ok, payload = responder_comentario_facebook(perfil, comment_id, respuesta)
                 Mensaje.objects.create(conversacion=conversacion, tipo='texto', origen='saliente', contenido=respuesta, respondido=ok)
                 evento['auto_respuesta'] = ok
@@ -1953,6 +2421,7 @@ def webhook_whatsapp(request):
         return JsonResponse({'error': 'Perfil no configurado'}, status=400)
 
     numero = data.get('numero', '')
+    numero_real = numero_whatsapp_visible(data.get('numero_real', ''))
     linea_interna = data.get('linea', 'principal') or 'principal'
     linea = linea_whatsapp_publica(linea_interna)
     linea_numero = data.get('linea_numero', '')
@@ -1963,8 +2432,14 @@ def webhook_whatsapp(request):
     remitente_grupo = data.get('remitente_grupo', '')
     audio_base64 = data.get('audio_base64')
     audio_mimetype = data.get('audio_mimetype', 'audio/ogg')
+    es_audio_entrante = (
+        tipo == 'voz'
+        or contenido == '[Audio]'
+        or bool(audio_base64)
+        or str(audio_mimetype or '').startswith('audio/')
+    )
 
-    if tipo == 'voz' or contenido == '[Audio]':
+    if es_audio_entrante:
         transcripcion = transcribir_audio_whatsapp(audio_base64, audio_mimetype)
         if transcripcion:
             contenido = transcripcion
@@ -1975,7 +2450,8 @@ def webhook_whatsapp(request):
                 f"mimetype={audio_mimetype or 'sin mimetype'}"
             )
 
-    conversacion_numero = f"{linea}:{numero}"[:80]
+    numero_conversacion = numero_real or numero
+    conversacion_numero = f"{linea}:{numero_conversacion}"[:80]
 
     conversacion, _ = Conversacion.objects.get_or_create(
         perfil=perfil,
@@ -1994,6 +2470,158 @@ def webhook_whatsapp(request):
     )
     if debe_leer_whatsapp(linea_interna, es_grupo):
         anunciar_mensaje_whatsapp(perfil.id, nombre_contacto, numero, contenido, tipo)
+
+    # ─── DETECCIÓN DE INTENCIÓN DE AGENDAMIENTO ─────────────────────
+    from .services import CitaService
+
+    cita_service = CitaService()
+
+    # Debug: Imprimir información del mensaje
+    print(f"[CITA DEBUG] 📍📍 Mensaje recibido - Tipo: {tipo}, Es grupo: {es_grupo}")
+    print(f"[CITA DEBUG] 📍📍 Debe responder: {debe_responder_whatsapp(linea_interna, es_grupo)}")
+    print(f"[CITA DEBUG] 📍📍 Contenido: {contenido[:100]}...")
+    print(f"[CITA DEBUG] 📍📍 Línea: {linea_interna}")
+    print(
+        "[WhatsApp Voz] Respuesta audio: "
+        f"entrante_audio={es_audio_entrante}, "
+        f"switch={debe_responder_voz_whatsapp(linea_interna)}, "
+        f"generar_audio={debe_responder_audio_por_mensaje(linea_interna, es_audio_entrante)}"
+    )
+
+    # Solo procesar agendamiento si no es grupo y se debe responder
+    if not es_grupo and debe_responder_whatsapp(linea_interna, es_grupo):
+        print(f"[CITA DEBUG] ✅ Pasando a detección de intención...")
+        if cita_service.detectar_intencion_agendamiento(contenido, conversacion=conversacion):
+            print(f"[CITA] ✅ Intención de agendamiento detectada en mensaje: {contenido[:50]}...")
+
+            datos_cita = cita_service.extraer_datos_cita(contenido, perfil, conversacion=conversacion)
+
+            print(f"[CITA] Datos extraídos: {datos_cita}")
+
+            if datos_cita.get('completo') and datos_cita.get('fecha_hora'):
+                try:
+                    # Crear la cita (con validación de conflictos)
+                    cita, resultado = cita_service.crear_cita(conversacion, datos_cita, linea_whatsapp=linea)
+
+                    if resultado['exito']:
+                        # Generar respuesta de confirmación
+                        respuesta_texto = cita_service.formatear_confirmacion_cita(cita)
+
+                        # Reproducir sonido de confirmación
+                        try:
+                            reproducir_sonido_cita()
+                        except Exception as sonido_exc:
+                            print(f"[CITA] No pude reproducir sonido: {sonido_exc}")
+
+                        # Guardar respuesta
+                        audio_url = None
+                        if debe_responder_audio_por_mensaje(linea_interna, es_audio_entrante):
+                            try:
+                                audio_url = TTSService().generar_audio(
+                                    respuesta_texto,
+                                    voz=perfil.voz_preferida,
+                                    velocidad=perfil.voz_velocidad,
+                                )
+                            except Exception as exc:
+                                print(f"[CITA] No pude generar audio: {exc}")
+
+                        Mensaje.objects.create(
+                            conversacion=conversacion,
+                            tipo='texto',
+                            origen='saliente',
+                            contenido=respuesta_texto,
+                            audio_url=audio_url,
+                            respondido=True,
+                        )
+
+                        return JsonResponse({
+                            'respuesta': respuesta_texto,
+                            'audio_url': audio_url,
+                            'numero': numero,
+                            'linea': linea,
+                            'audio_recibido': es_audio_entrante,
+                            'transcripcion': contenido if tipo == 'voz' and contenido != '[Audio]' else '',
+                            'cita_agendada': True,
+                            'cita_id': cita.id,
+                        })
+                    else:
+                        # Hay conflicto - enviar mensaje de conflicto con horarios disponibles
+                        respuesta_texto = resultado['mensaje']
+
+                        # Generar audio si está configurado
+                        audio_url = None
+                        if debe_responder_audio_por_mensaje(linea_interna, es_audio_entrante):
+                            try:
+                                audio_url = TTSService().generar_audio(
+                                    respuesta_texto,
+                                    voz=perfil.voz_preferida,
+                                    velocidad=perfil.voz_velocidad,
+                                )
+                            except Exception as exc:
+                                print(f"[CITA] No pude generar audio: {exc}")
+
+                        Mensaje.objects.create(
+                            conversacion=conversacion,
+                            tipo='texto',
+                            origen='saliente',
+                            contenido=respuesta_texto,
+                            audio_url=audio_url,
+                            respondido=True,
+                        )
+
+                        return JsonResponse({
+                            'respuesta': respuesta_texto,
+                            'audio_url': audio_url,
+                            'numero': numero,
+                            'linea': linea,
+                            'audio_recibido': es_audio_entrante,
+                            'transcripcion': contenido if tipo == 'voz' and contenido != '[Audio]' else '',
+                            'cita_conflicto': True,
+                            'cita_conflicto_id': resultado['conflicto'].get('cita_conflicto').id if resultado['conflicto'] and resultado['conflicto'].get('cita_conflicto') else None,
+                            'dia_completo': resultado.get('dia_completo', False),
+                        })
+
+                except Exception as cita_exc:
+                    print(f"[CITA] Error creando cita: {cita_exc}")
+                    # Continuar con respuesta normal del chat
+            else:
+                print(f"[CITA] ⚠️ Datos incompletos para crear cita. completo={datos_cita.get('completo')}, fecha_hora={datos_cita.get('fecha_hora')}")
+                respuesta_texto = (
+                    "Claro, lo coordinamos con gusto. "
+                    "¿Prefieres que lo revisemos por llamada, WhatsApp o una reunión por Meet?"
+                )
+                audio_url = None
+                if debe_responder_audio_por_mensaje(linea_interna, es_audio_entrante):
+                    try:
+                        audio_url = TTSService().generar_audio(
+                            respuesta_texto,
+                            voz=perfil.voz_preferida,
+                            velocidad=perfil.voz_velocidad,
+                        )
+                    except Exception as exc:
+                        print(f"[CITA] No pude generar audio: {exc}")
+
+                Mensaje.objects.create(
+                    conversacion=conversacion,
+                    tipo='texto',
+                    origen='saliente',
+                    contenido=respuesta_texto,
+                    audio_url=audio_url,
+                    respondido=True,
+                )
+
+                return JsonResponse({
+                    'respuesta': respuesta_texto,
+                    'audio_url': audio_url,
+                    'numero': numero,
+                    'linea': linea,
+                    'audio_recibido': es_audio_entrante,
+                    'transcripcion': contenido if tipo == 'voz' and contenido != '[Audio]' else '',
+                    'cita_datos_incompletos': True,
+                })
+        else:
+            print(f"[CITA] ❌ No se detectó intención de agendamiento en el mensaje")
+    # ─── FIN DETECCIÓN DE AGENDAMIENTO ─────────────────────────────
 
     if not debe_responder_whatsapp(linea_interna, es_grupo):
         return JsonResponse({
@@ -2024,12 +2652,22 @@ def webhook_whatsapp(request):
                 'linea_numero': linea_numero,
                 'es_grupo': es_grupo,
                 'remitente_grupo': remitente_grupo,
+                'forzar_groq_primero': es_audio_entrante,
             },
         )
         respuesta_texto = limpiar_respuesta_whatsapp(respuesta_texto, perfil)
 
+    if not (respuesta_texto or '').strip():
+        return respuesta_silenciosa_json(
+            numero=numero,
+            linea=linea,
+            es_grupo=es_grupo,
+            audio_recibido=es_audio_entrante,
+            transcripcion=contenido if tipo == 'voz' and contenido != '[Audio]' else '',
+        )
+
     audio_url = None
-    if debe_responder_voz_whatsapp(linea_interna):
+    if debe_responder_audio_por_mensaje(linea_interna, es_audio_entrante):
         try:
             audio_url = TTSService().generar_audio(
                 respuesta_texto,
@@ -2054,7 +2692,7 @@ def webhook_whatsapp(request):
         'audio_url': audio_url,
         'numero': numero,
         'linea': linea,
-        'audio_recibido': bool(audio_base64),
+        'audio_recibido': es_audio_entrante,
         'transcripcion': contenido if tipo == 'voz' and contenido != '[Audio]' else '',
     })
 
@@ -2169,6 +2807,11 @@ def chat_directo(request):
 
     # Obtener respuesta de la IA
     respuesta_ia = glm.chat(mensaje, perfil, historial)
+    if not (respuesta_ia or '').strip():
+        return respuesta_silenciosa_json(
+            session_memory=True,
+            conversacion_id=conversacion.id,
+        )
 
     # Detectar si la IA devuelve un comando entre corchetes [COMANDO]
     comando_extraido = extraer_comando_ia(respuesta_ia)
@@ -2550,6 +3193,33 @@ def limpiar_numero_whatsapp(numero):
     return limpio
 
 
+def numero_whatsapp_visible(numero):
+    """Devuelve solo telefonos reales, ocultando LID, grupos e IDs internos."""
+    texto = str(numero or '').strip()
+    if not texto:
+        return ''
+
+    if texto.startswith('facebook:'):
+        return ''
+
+    if ':' in texto and not texto.startswith(('web:', 'desktop:')):
+        texto = texto.split(':', 1)[1]
+
+    texto_lower = texto.lower()
+    if (
+        texto_lower.startswith(('web:', 'desktop:')) or
+        '@lid' in texto_lower or
+        '@g.us' in texto_lower or
+        '-' in texto_lower
+    ):
+        return ''
+
+    limpio = limpiar_numero_whatsapp(texto)
+    if 8 <= len(limpio) <= 15:
+        return limpio
+    return ''
+
+
 def parsear_lista_numeros_whatsapp(valor):
     if isinstance(valor, (list, tuple)):
         return list(valor)
@@ -2780,303 +3450,6 @@ No incluyas URLs, dominios, enlaces ni menciones las fuentes. Simplemente da la 
     except Exception as e:
         print(f"[WEB_SYNTH] Error sintetizando respuesta: {e}")
         return None
-
-
-def procesar_comando_desarrollo(mensaje, perfil):
-    """Procesa comandos de desarrollo que empiezan con /"""
-    dev_tools = DeveloperTools(working_dir=settings.BASE_DIR)
-    pc_tools = PCActionService(working_dir=os.path.expanduser("~"))
-
-    partes = mensaje.split()
-    comando = partes[0].lower()
-    args = partes[1:] if len(partes) > 1 else []
-
-    try:
-        if comando == "/whatsapp_masivo":
-            if not args:
-                return (
-                    "Uso: /whatsapp_masivo linea=yo;numeros=573001234567,573009876543;"
-                    "mensaje=Texto exacto a enviar"
-                )
-            try:
-                parametros = extraer_parametros_whatsapp_masivo(" ".join(args))
-            except Exception as exc:
-                return f"No pude leer la lista o el mensaje del envío: {exc}"
-            return enviar_whatsapp_masivo(parametros, perfil=perfil)
-
-        # Comandos de Git
-        if comando == "/git":
-            if not args:
-                exito, resultado = dev_tools.git_status()
-            elif args[0] == "init":
-                exito, resultado = dev_tools.git_init()
-            elif args[0] == "clone" and len(args) > 1:
-                exito, resultado = dev_tools.git_clone(args[1], args[2] if len(args) > 2 else None)
-            elif args[0] == "add":
-                exito, resultado = dev_tools.git_add(args[1] if len(args) > 1 else ".")
-            elif args[0] == "commit" and len(args) > 1:
-                exito, resultado = dev_tools.git_commit(" ".join(args[1:]))
-            elif args[0] == "push":
-                exito, resultado = dev_tools.git_push(args[1] if len(args) > 1 else "origin", args[2] if len(args) > 2 else "main")
-            elif args[0] == "pull":
-                exito, resultado = dev_tools.git_pull()
-            elif args[0] == "branch":
-                exito, resultado = dev_tools.git_branch(args[1] if len(args) > 1 else None, crear=len(args) > 1)
-            else:
-                return "Comando git no reconocido. Opciones: init, clone, add, commit, push, pull, branch"
-            return respuesta_comando(exito, resultado, mensaje)
-
-        # Comandos de Docker
-        elif comando == "/docker":
-            if not args or args[0] == "ps":
-                exito, resultado = dev_tools.docker_ps()
-            elif args[0] == "build":
-                exito, resultado = dev_tools.docker_build(args[1] if len(args) > 1 else "latest")
-            elif args[0] == "up":
-                exito, resultado = dev_tools.docker_up(args[1] if len(args) > 1 else "docker-compose.yml")
-            elif args[0] == "down":
-                exito, resultado = dev_tools.docker_down(args[1] if len(args) > 1 else "docker-compose.yml")
-            else:
-                return "Comando docker no reconocido. Opciones: ps, build, up, down"
-            return respuesta_comando(exito, resultado, mensaje)
-
-        # Terminal libre en modo desarrollador
-        elif comando == "/cmd":
-            if not args:
-                return "Uso: /cmd <comando>. Ejemplo: /cmd python manage.py check"
-            comando_terminal = " ".join(args)
-            cmd_service = ComandoService(modo_desarrollador=True)
-            exito, resultado = cmd_service.ejecutar(
-                comando_terminal,
-                timeout=120,
-                working_dir=settings.BASE_DIR,
-            )
-            return respuesta_comando(exito, resultado or "Comando ejecutado sin salida.", mensaje)
-
-        # Comandos de proyectos
-        elif comando == "/crear":
-            if not args:
-                return "Uso: /crear <tipo> <nombre>. Tipos: django, fastapi, flask, react, vue, next"
-            tipo = args[0].lower()
-            nombre = args[1] if len(args) > 1 else "mi-proyecto"
-
-            if tipo == "django":
-                exito, resultado = dev_tools.crear_django(nombre)
-            elif tipo == "fastapi":
-                exito, resultado = dev_tools.crear_fastapi(nombre)
-            elif tipo == "flask":
-                exito, resultado = dev_tools.crear_flask(nombre)
-            elif tipo == "react":
-                exito, resultado = dev_tools.crear_react(nombre)
-            elif tipo == "vue":
-                exito, resultado = dev_tools.crear_vue(nombre)
-            elif tipo == "next":
-                exito, resultado = dev_tools.crear_next(nombre)
-            else:
-                return f"Tipo de proyecto no reconocido: {tipo}. Opciones: django, fastapi, flask, react, vue, next"
-            return respuesta_comando(exito, resultado, mensaje)
-
-        # Comandos de aplicaciones
-        elif comando == "/abrir":
-            if not args:
-                return "Uso: /abrir <aplicacion|url>. Ejemplos: /abrir code, /abrir firefox https://google.com"
-            if args[0] == "code" or args[0] == "vscode":
-                ruta = args[1] if len(args) > 1 else "."
-                exito, resultado = dev_tools.abrir_vscode(ruta)
-            elif args[0].startswith("http"):
-                exito, resultado = dev_tools.abrir_navegador(args[0])
-            else:
-                exito, resultado = dev_tools.abrir_aplicacion(args[0])
-            return respuesta_comando(exito, resultado, mensaje)
-
-        # Comandos de archivos
-        elif comando == "/leer":
-            if not args:
-                return "Uso: /leer <archivo>"
-            exito, resultado = dev_tools.leer_archivo(args[0])
-            return respuesta_comando(exito, resultado, mensaje)
-
-        elif comando == "/escribir":
-            if len(args) < 2:
-                return "Uso: /escribir <archivo> <contenido>"
-            archivo = args[0]
-            contenido = " ".join(args[1:])
-            exito, resultado = dev_tools.escribir_archivo(archivo, contenido)
-            return respuesta_comando(exito, resultado, mensaje)
-
-        elif comando == "/ls":
-            patron = args[0] if args else "*"
-            exito, resultado = dev_tools.listar_archivos(".", patron)
-            return respuesta_comando(exito, resultado, mensaje)
-
-        # Información del sistema
-        elif comando == "/sys":
-            exito, resultado = dev_tools.obtener_info_sistema()
-            return resultado
-
-        # Investigación web
-        elif comando == "/web":
-            if not args:
-                return "Uso: /web <consulta>. Ejemplo: /web instalar docker ubuntu 24.04"
-            consulta = " ".join(args)
-            try:
-                return procesar_investigacion_web(consulta, perfil=perfil)
-            except Exception as e:
-                return f"No pude consultar internet en este momento: {str(e)}"
-
-        # Acciones generales del PC
-        elif comando == "/pc":
-            if not args:
-                return "Uso: /pc <accion> [parametros]. Escriba /help para ver acciones disponibles."
-
-            if ":" in args[0]:
-                accion, parametro = args[0].split(":", 1)
-                args = [accion, parametro, *args[1:]]
-
-            accion = args[0].lower().replace("-", "_")
-            parametros = args[1:]
-            confirmado = any(p.lower() in ("confirmar", "--confirmar", "confirmado", "si", "sí") for p in parametros)
-            parametros = [p for p in parametros if p.lower() not in ("confirmar", "--confirmar", "confirmado", "si", "sí")]
-
-            aliases = {
-                "url": "abrir_url",
-                "web": "abrir_url",
-                "abrir_web": "abrir_url",
-                "internet": "buscar",
-                "buscar_web": "buscar",
-                "terminal": "abrir_terminal",
-                "consola": "abrir_terminal",
-                "carpeta": "abrir_carpeta",
-                "archivos": "abrir_carpeta",
-                "cerrar": "cerrar_app",
-                "cerrar_browser": "cerrar_navegador",
-                "lock": "bloquear",
-                "bloquea": "bloquear",
-                "suspende": "suspender",
-                "sleep": "suspender",
-                "shutdown": "apagar",
-                "restart": "reiniciar",
-                "reboot": "reiniciar",
-                "diagnosticar": "diagnostico",
-                "diagnóstico": "diagnostico",
-                "reparar": "diagnostico",
-            }
-            accion = aliases.get(accion, accion)
-
-            if pc_tools.requiere_confirmacion(accion) and not confirmado:
-                parametros_texto = " ".join(parametros)
-                comando_confirmacion = f"/pc {accion} {parametros_texto} confirmar".replace("  ", " ").strip()
-                return (
-                    f"La acción '{accion}' puede cerrar programas, pausar la sesión o interrumpir trabajo en curso.\n"
-                    f"Para ejecutarla, repita: {comando_confirmacion}"
-                )
-
-            if accion == "abrir_url":
-                if not parametros:
-                    return "Uso: /pc abrir_url <url>"
-                exito, resultado = pc_tools.abrir_url(" ".join(parametros))
-            elif accion == "buscar":
-                if not parametros:
-                    return "Uso: /pc buscar <consulta>"
-                exito, resultado = pc_tools.buscar_web(" ".join(parametros))
-            elif accion == "abrir_terminal":
-                ruta = os.path.expanduser(" ".join(parametros)) if parametros else None
-                exito, resultado = pc_tools.abrir_terminal(ruta)
-            elif accion == "abrir_carpeta":
-                ruta = os.path.expanduser(" ".join(parametros)) if parametros else "."
-                exito, resultado = pc_tools.abrir_carpeta(ruta)
-            elif accion == "cerrar_app":
-                if not parametros:
-                    return "Uso: /pc cerrar_app <nombre>"
-                exito, resultado = pc_tools.cerrar_app(" ".join(parametros))
-            elif accion == "cerrar_navegador":
-                navegador = parametros[0] if parametros else "firefox"
-                exito, resultado = pc_tools.cerrar_navegador(navegador)
-            elif accion == "bloquear":
-                exito, resultado = pc_tools.bloquear()
-            elif accion == "suspender":
-                exito, resultado = pc_tools.suspender()
-            elif accion == "hibernar":
-                exito, resultado = pc_tools.hibernar()
-            elif accion == "apagar":
-                exito, resultado = pc_tools.apagar()
-            elif accion == "reiniciar":
-                exito, resultado = pc_tools.reiniciar()
-            elif accion == "diagnostico":
-                exito, resultado = pc_tools.diagnostico()
-            elif accion == "errores":
-                exito, resultado = pc_tools.errores_recientes()
-            else:
-                return (
-                    f"Acción de PC no reconocida: {accion}. Opciones: abrir_url, buscar, abrir_terminal, "
-                    "abrir_carpeta, cerrar_app, cerrar_navegador, bloquear, suspender, hibernar, "
-                    "apagar, reiniciar, diagnostico, errores."
-                )
-
-            return respuesta_comando(exito, resultado, mensaje)
-
-        # Ayuda
-        elif comando == "/help" or comando == "/ayuda":
-            return """Comandos disponibles:
-
-Git:
-  /git init              - Inicializa repositorio
-  /git clone <url>       - Clona repositorio
-  /git status            - Estado del repositorio
-  /git add [archivos]    - Agrega archivos (default: todos)
-  /git commit <msg>      - Crea commit
-  /git push [remoto] [rama] - Hace push
-  /git pull              - Hace pull
-  /git branch [nombre]   - Lista o crea rama
-
-Docker:
-  /docker ps             - Lista contenedores
-  /docker build [tag]    - Construye imagen
-  /docker up [compose]   - Levanta servicios
-  /docker down [compose] - Detiene servicios
-
-Proyectos:
-  /crear django <nombre>     - Crea proyecto Django
-  /crear fastapi <nombre>    - Crea proyecto FastAPI
-  /crear flask <nombre>      - Crea proyecto Flask
-  /crear react <nombre>      - Crea proyecto React
-  /crear vue <nombre>        - Crea proyecto Vue
-  /crear next <nombre>       - Crea proyecto Next.js
-
-Aplicaciones:
-  /abrir code [ruta]         - Abre VS Code
-  /abrir <app>               - Abre aplicación
-  /abrir <url>               - Abre URL en navegador
-
-PC:
-  /pc abrir_url <url>              - Abre una página web
-  /pc buscar <consulta>            - Busca en Google
-  /pc abrir_terminal [ruta]        - Abre una terminal gráfica
-  /pc abrir_carpeta [ruta]         - Abre el explorador de archivos
-  /pc cerrar_app <nombre>          - Cierra una aplicación por nombre
-  /pc cerrar_navegador [nav]       - Cierra Firefox/Chrome/Chromium/etc.
-  /pc bloquear                     - Bloquea la sesión
-  /pc suspender confirmar          - Suspende el PC
-  /pc apagar confirmar             - Apaga el PC
-  /pc reiniciar confirmar          - Reinicia el PC
-  /pc diagnostico                  - Revisa disco, memoria, carga y servicios
-  /pc errores                      - Muestra errores recientes del sistema
-
-Archivos:
-  /leer <archivo>            - Lee archivo
-  /escribir <file> <content> - Escribe archivo
-  /ls [patrón]               - Lista archivos
-
-Sistema:
-  /sys                       - Info del sistema
-  /web <consulta>            - Investiga en internet con contexto del sistema
-  /help                      - Muestra esta ayuda"""
-
-        else:
-            return f"Comando no reconocido: {comando}. Escribe /help para ver comandos disponibles."
-
-    except Exception as e:
-        return f"Error ejecutando comando: {str(e)}"
 
 
 # ─── API MENSAJES ─────────────────────────────────────────────
@@ -3519,143 +3892,6 @@ def generar_resumen_tarea(tarea, salida):
 
 
 # ─── TERMINAL WEB ────────────────────────────────────────────────
-@csrf_exempt
-@require_http_methods(["POST"])
-def terminal_ejecutar(request):
-    """Ejecuta un comando desde la terminal web en modo desarrollador"""
-    try:
-        data = json.loads(request.body)
-        comando = data.get('comando', '').strip()
-    except:
-        return JsonResponse({'success': False, 'output': 'JSON inválido', 'command': ''}, status=400)
-
-    if not comando:
-        return JsonResponse({'success': False, 'output': 'Comando vacío', 'command': ''})
-
-    segundo_plano = data.get('segundo_plano', False) or comando.startswith("bg ")
-    if comando.startswith("bg "):
-        comando = comando[3:].strip()
-
-    if segundo_plano:
-        def ejecutar_terminal_background():
-            cmd_service = ComandoService(modo_desarrollador=True)
-            exitoso, resultado = cmd_service.ejecutar(comando, timeout=3600)
-            prefijo = "Comando completado" if exitoso else "Comando terminó con error"
-            return f"{prefijo}: {comando}\n\n{resultado}"
-
-        tarea = BackgroundTaskManager.crear(
-            titulo=f"Terminal: {comando}",
-            comando=comando,
-            target=ejecutar_terminal_background,
-            owner_id=request.user.id,
-        )
-        return JsonResponse({
-            'success': True,
-            'output': f"Tarea enviada a segundo plano. ID: {tarea['id']}",
-            'command': comando,
-            'segundo_plano': True,
-            'tarea_id': tarea['id'],
-            'tarea': tarea,
-        })
-
-    # Usar modo desarrollador con acceso completo
-    cmd_service = ComandoService(modo_desarrollador=True)
-    exitoso, resultado = cmd_service.ejecutar(comando, timeout=60)
-
-    return JsonResponse({
-        'success': exitoso,
-        'output': resultado,
-        'command': comando
-    })
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def gestion_permisos(request):
-    """Gestiona los permisos de comandos (ahora solo informativo)"""
-    if request.method == 'GET':
-        # Retornar información sobre comandos disponibles
-        from .services import ComandoService
-        cmd_service = ComandoService(modo_desarrollador=False)
-
-        return JsonResponse({
-            'modo_desarrollador': True,
-            'comandos_basicos': ComandoService.COMANDOS_BASICOS,
-            'comandos_desarrollo': ComandoService.COMANDOS_DESARROLLO,
-            'comandos_sistema': ComandoService.COMANDOS_SISTEMA,
-            'mensaje': 'Modo desarrollador activo - Todos los comandos están disponibles'
-        })
-
-    return JsonResponse({'success': True, 'mensaje': 'Modo desarrollador activo'})
-
-
-# ─── API DEVELOPER TOOLS ───────────────────────────────────────
-@csrf_exempt
-@require_http_methods(["POST"])
-def devtools_accion(request):
-    """Ejecuta acciones de DeveloperTools"""
-    try:
-        data = json.loads(request.body)
-        accion = data.get('accion')
-        params = data.get('params', {})
-    except:
-        return JsonResponse({'success': False, 'error': 'JSON inválido'}, status=400)
-
-    dev_tools = DeveloperTools(working_dir=settings.BASE_DIR)
-
-    try:
-        if accion == 'crear_django':
-            exito, resultado = dev_tools.crear_django(params.get('nombre', 'mi-proyecto'))
-        elif accion == 'crear_fastapi':
-            exito, resultado = dev_tools.crear_fastapi(params.get('nombre', 'mi-proyecto'))
-        elif accion == 'crear_flask':
-            exito, resultado = dev_tools.crear_flask(params.get('nombre', 'mi-proyecto'))
-        elif accion == 'crear_react':
-            exito, resultado = dev_tools.crear_react(params.get('nombre', 'mi-proyecto'), params.get('typescript', False))
-        elif accion == 'crear_vue':
-            exito, resultado = dev_tools.crear_vue(params.get('nombre', 'mi-proyecto'))
-        elif accion == 'crear_next':
-            exito, resultado = dev_tools.crear_next(params.get('nombre', 'mi-proyecto'))
-        elif accion == 'git_init':
-            exito, resultado = dev_tools.git_init()
-        elif accion == 'git_clone':
-            exito, resultado = dev_tools.git_clone(params.get('url'), params.get('nombre'))
-        elif accion == 'git_status':
-            exito, resultado = dev_tools.git_status()
-        elif accion == 'git_add':
-            exito, resultado = dev_tools.git_add(params.get('archivos', '.'))
-        elif accion == 'git_commit':
-            exito, resultado = dev_tools.git_commit(params.get('mensaje', 'Update'))
-        elif accion == 'git_push':
-            exito, resultado = dev_tools.git_push(params.get('remoto', 'origin'), params.get('rama', 'main'))
-        elif accion == 'git_pull':
-            exito, resultado = dev_tools.git_pull()
-        elif accion == 'abrir_vscode':
-            exito, resultado = dev_tools.abrir_vscode(params.get('ruta', '.'))
-        elif accion == 'abrir_navegador':
-            exito, resultado = dev_tools.abrir_navegador(params.get('url', 'https://google.com'), params.get('navegador', 'firefox'))
-        elif accion == 'docker_ps':
-            exito, resultado = dev_tools.docker_ps()
-        elif accion == 'docker_up':
-            exito, resultado = dev_tools.docker_up(params.get('compose_file', 'docker-compose.yml'))
-        elif accion == 'docker_down':
-            exito, resultado = dev_tools.docker_down(params.get('compose_file', 'docker-compose.yml'))
-        elif accion == 'leer_archivo':
-            exito, resultado = dev_tools.leer_archivo(params.get('ruta'))
-        elif accion == 'sysinfo':
-            exito, resultado = dev_tools.obtener_info_sistema()
-        else:
-            return JsonResponse({'success': False, 'error': f'Acción no reconocida: {accion}'}, status=400)
-
-        return JsonResponse({
-            'success': exito,
-            'resultado': resultado,
-            'accion': accion
-        })
-
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
 
 # ─── API ALARMAS / TAREAS PROGRAMADAS ─────────────────────────────
 @csrf_exempt
@@ -3687,35 +3923,36 @@ def crear_alarma(request):
             parametros['linea_publica'] = linea_publica
 
         # Parsear la fecha/hora
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         # Soportar formatos relativos como "+30min", "+1h", "+2dias"
         if programado_para_str.startswith('+'):
             cantidad_str = programado_para_str[1:]
             if 'min' in cantidad_str.lower():
                 minutos = int(''.join(c for c in cantidad_str if c.isdigit()))
-                programado_para = datetime.now() + timedelta(minutes=minutos)
+                programado_para = timezone.now() + timedelta(minutes=minutos)
             elif 'h' in cantidad_str.lower() or 'hr' in cantidad_str.lower():
                 horas = int(''.join(c for c in cantidad_str if c.isdigit()))
-                programado_para = datetime.now() + timedelta(hours=horas)
+                programado_para = timezone.now() + timedelta(hours=horas)
             elif 'dia' in cantidad_str.lower():
                 dias = int(''.join(c for c in cantidad_str if c.isdigit()))
-                programado_para = datetime.now() + timedelta(days=dias)
+                programado_para = timezone.now() + timedelta(days=dias)
             else:
                 return JsonResponse({'error': f'Formato relativo no reconocido: {programado_para_str}'}, status=400)
         else:
             # Formato: "YYYY-MM-DD HH:MM" o "HH:MM" (para hoy)
             if ' ' in programado_para_str:
-                programado_para = datetime.strptime(programado_para_str, '%Y-%m-%d %H:%M')
+                naive_dt = datetime.strptime(programado_para_str, '%Y-%m-%d %H:%M')
+                programado_para = timezone.make_aware(naive_dt)
             else:
                 # Solo hora, para hoy
-                hoy = datetime.now().date()
+                hoy = timezone.now().date()
                 hora = datetime.strptime(programado_para_str, '%H:%M').time()
-                programado_para = datetime.combine(hoy, hora)
+                naive_dt = datetime.combine(hoy, hora)
+                programado_para = timezone.make_aware(naive_dt)
 
                 # Si la hora ya pasó, asumir que es para mañana
-                if programado_para <= datetime.now():
-                    from datetime import timedelta
+                if programado_para <= timezone.now():
                     programado_para = programado_para + timedelta(days=1)
 
         # Crear la tarea
@@ -3883,3 +4120,444 @@ def scheduler_iniciar(request):
         })
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
+def politica_privacidad(request):
+    return HttpResponse("""<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Política de Privacidad - DAGI Bot</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #333; }
+                h1 { color: #1a73e8; }
+                h2 { color: #444; margin-top: 30px; }
+                p { line-height: 1.7; }
+                footer { margin-top: 40px; color: #888; font-size: 0.9em; }
+            </style>
+        </head>
+        <body>
+            <h1>Política de Privacidad</h1>
+            <p><strong>DAGI – Desarrollo de Aplicaciones para la Gestión Inteligente</strong></p>
+            <p>Última actualización: 20 de mayo de 2026</p>
+
+            <h2>1. Información que recopilamos</h2>
+            <p>DAGI Bot recopila únicamente los mensajes enviados por los usuarios a través de Facebook Messenger y los comentarios realizados en publicaciones de la página oficial de DAGI en Facebook. Esta información se utiliza exclusivamente para responder de forma automática a las consultas de los clientes.</p>
+
+            <h2>2. Uso de la información</h2>
+            <p>La información recopilada se utiliza para:</p>
+            <ul>
+                <li>Responder automáticamente a mensajes y comentarios de clientes.</li>
+                <li>Generar estadísticas internas sobre preguntas y respuestas frecuentes para mejorar la calidad del servicio.</li>
+            </ul>
+
+            <h2>3. Almacenamiento y seguridad</h2>
+            <p>Los datos recopilados se almacenan en servidores seguros y no son compartidos con terceros. Implementamos medidas técnicas y organizativas para proteger la información contra accesos no autorizados.</p>
+
+            <h2>4. Retención de datos</h2>
+            <p>Los datos de conversación se conservan únicamente durante el tiempo necesario para prestar el servicio y mejorar la experiencia del usuario. El usuario puede solicitar la eliminación de sus datos en cualquier momento.</p>
+
+            <h2>5. Derechos del usuario</h2>
+            <p>Los usuarios tienen derecho a:</p>
+            <ul>
+                <li>Acceder a sus datos personales.</li>
+                <li>Solicitar la corrección o eliminación de sus datos.</li>
+                <li>Oponerse al tratamiento de sus datos.</li>
+            </ul>
+
+            <h2>6. Contacto</h2>
+            <p>Para cualquier consulta relacionada con esta política de privacidad, puede contactarnos a través de:</p>
+            <p>Correo electrónico: <a href="mailto:dagidesarrollo@gmail.com">dagidesarrollo@gmail.com</a></p>
+
+            <h2>7. Cambios en esta política</h2>
+            <p>DAGI se reserva el derecho de actualizar esta política de privacidad en cualquier momento. Los cambios serán publicados en esta misma página.</p>
+
+            <footer>
+                <p>© 2026 DAGI – Desarrollo de Aplicaciones para la Gestión Inteligente. Todos los derechos reservados.</p>
+            </footer>
+        </body>
+        </html>""", content_type='text/html')
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def webhook_facebook(request):
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"[WEBHOOK FB] {request.method} - Headers: {dict(request.headers)} - Body: {request.body[:500]}")
+    print(f"[WEBHOOK FB] {request.method} llegó", flush=True)
+
+
+# ─── PÁGINA DE CITAS ──────────────────────────────────────────────
+@require_http_methods(["GET"])
+def citas_page(request):
+    """Página principal de citas y agendamientos."""
+    perfil = obtener_perfil_usuario(request)
+    return render(request, 'asistente/citas.html', {'perfil': perfil})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def citas_listar(request):
+    """API para listar citas del usuario actual."""
+    from asistente.models import Cita
+    from django.core.paginator import Paginator
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    orden = request.GET.get('orden', 'recientes')
+    if orden == 'creadas':
+        citas = Cita.objects.filter(perfil=perfil).select_related('conversacion').order_by('-creado_en', '-fecha_hora')
+    elif orden == 'proximas':
+        citas = Cita.objects.filter(perfil=perfil).select_related('conversacion').order_by('fecha_hora', '-creado_en')
+    else:
+        citas = Cita.objects.filter(perfil=perfil).select_related('conversacion').order_by('-fecha_hora', '-creado_en')
+
+    try:
+        pagina = max(1, int(request.GET.get('page', 1)))
+    except (TypeError, ValueError):
+        pagina = 1
+
+    try:
+        por_pagina = int(request.GET.get('per_page', 6))
+    except (TypeError, ValueError):
+        por_pagina = 6
+    por_pagina = min(max(por_pagina, 1), 30)
+
+    paginador = Paginator(citas, por_pagina)
+    pagina_obj = paginador.get_page(pagina)
+
+    hoy = timezone.now().date()
+    manana = hoy + timezone.timedelta(days=1)
+    proximos_7_dias = hoy + timezone.timedelta(days=7)
+
+    citas_data = []
+    for cita in pagina_obj.object_list:
+        estado_color = 'amber'
+        if cita.estado == 'confirmada':
+            estado_color = 'blue'
+        elif cita.estado == 'completada':
+            estado_color = 'green'
+        elif cita.estado == 'cancelada':
+            estado_color = 'red'
+
+        conversacion = cita.conversacion
+        contacto_nombre, contacto_numero = _datos_contacto_cita(conversacion)
+        contexto_reunion = _contexto_reunion_cita(cita)
+        fecha_hora_local = timezone.localtime(cita.fecha_hora)
+
+        citas_data.append({
+            'id': cita.id,
+            'titulo': cita.titulo,
+            'descripcion': cita.descripcion,
+            'contexto_reunion': contexto_reunion,
+            'contacto_nombre': contacto_nombre or 'Sin nombre',
+            'contacto_numero': contacto_numero or 'Sin telefono',
+            'fecha_hora': fecha_hora_local.isoformat(),
+            'fecha_hora_formatted': fecha_hora_local.strftime('%d/%m %H:%M'),
+            'duracion_minutos': cita.duracion_minutos,
+            'ubicacion': cita.ubicacion,
+            'tipo_ubicacion': cita.tipo_ubicacion,
+            'estado': cita.estado,
+            'estado_display': cita.get_estado_display(),
+            'estado_color': estado_color,
+            'creado_en': cita.creado_en.isoformat(),
+            'categoria': _clasificar_cita_por_fecha(fecha_hora_local, hoy, manana, proximos_7_dias),
+        })
+
+    citas_lista = list(citas)
+    total = len(citas_lista)
+    pendientes = sum(1 for cita in citas_lista if cita.estado == 'pendiente')
+    confirmadas = sum(1 for cita in citas_lista if cita.estado == 'confirmada')
+    hoy_count = sum(1 for cita in citas_lista if timezone.localtime(cita.fecha_hora).date() == hoy)
+    proximas_count = sum(
+        1 for cita in citas_lista
+        if hoy < timezone.localtime(cita.fecha_hora).date() <= proximos_7_dias
+    )
+
+    return JsonResponse({
+        'citas': citas_data,
+        'resumen': {
+            'total': total,
+            'pendientes': pendientes,
+            'confirmadas': confirmadas,
+            'hoy': hoy_count,
+            'proximas': proximas_count,
+        },
+        'paginacion': {
+            'pagina': pagina_obj.number,
+            'por_pagina': por_pagina,
+            'total': total,
+            'total_paginas': paginador.num_pages,
+            'tiene_anterior': pagina_obj.has_previous(),
+            'tiene_siguiente': pagina_obj.has_next(),
+            'anterior': pagina_obj.previous_page_number() if pagina_obj.has_previous() else None,
+            'siguiente': pagina_obj.next_page_number() if pagina_obj.has_next() else None,
+        },
+    })
+
+
+def _datos_contacto_cita(conversacion):
+    """Devuelve nombre y telefono legibles para mostrar en la agenda."""
+    if not conversacion:
+        return '', ''
+
+    nombre = conversacion.nombre_contacto or ''
+    numero = numero_whatsapp_visible(conversacion.numero_whatsapp)
+
+    if not numero and nombre:
+        alternativa = Conversacion.objects.filter(
+            perfil=conversacion.perfil,
+            nombre_contacto=nombre,
+        ).exclude(id=conversacion.id).exclude(
+            numero_whatsapp__startswith='web:'
+        ).exclude(
+            numero_whatsapp__startswith='desktop:'
+        ).order_by('-creada_en').first()
+        if alternativa:
+            numero = numero_whatsapp_visible(alternativa.numero_whatsapp)
+
+    return nombre, numero
+
+
+def _limpiar_texto_contexto_cita(texto):
+    texto = re.sub(r'\s+', ' ', texto or '').strip()
+    texto = re.sub(r'https?://\S+', '', texto).strip()
+    return texto
+
+
+def _contexto_reunion_cita(cita):
+    """Construye un contexto breve usando lo hablado con el cliente."""
+    descripcion = _limpiar_texto_contexto_cita(cita.descripcion)
+    if descripcion and descripcion.lower() not in ('cita', 'cita agendada', 'reunion', 'reunión'):
+        base = descripcion
+    else:
+        base = ''
+
+    mensajes_cliente = []
+    if cita.conversacion:
+        qs = cita.conversacion.mensajes.filter(origen='entrante').order_by('-creado_en')[:8]
+        for mensaje in qs:
+            texto = _limpiar_texto_contexto_cita(mensaje.contenido)
+            if not texto or texto == '[Audio]':
+                continue
+            if len(texto) > 180:
+                texto = texto[:177].rsplit(' ', 1)[0] + '...'
+            if texto.lower() not in {item.lower() for item in mensajes_cliente}:
+                mensajes_cliente.append(texto)
+
+    piezas = []
+    if base:
+        piezas.append(base)
+    piezas.extend(reversed(mensajes_cliente[-4:]))
+
+    if not piezas:
+        return cita.titulo or 'Reunion agendada'
+
+    contexto = ' | '.join(piezas)
+    if len(contexto) > 360:
+        contexto = contexto[:357].rsplit(' ', 1)[0] + '...'
+    return contexto
+
+
+def _clasificar_cita_por_fecha(fecha_cita, hoy, manana, proximos_7_dias):
+    """Clasifica una cita según su fecha."""
+    fecha = fecha_cita.date() if hasattr(fecha_cita, 'date') else fecha_cita
+
+    if fecha == hoy:
+        return 'hoy'
+    elif fecha == manana:
+        return 'manana'
+    elif fecha <= proximos_7_dias:
+        return 'esta_semana'
+    elif fecha > proximos_7_dias:
+        return 'futuro'
+    else:
+        return 'pasado'
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def cita_detalle(request, cita_id):
+    """API para obtener detalles de una cita específica."""
+    from asistente.models import Cita
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        cita = Cita.objects.get(id=cita_id, perfil=perfil)
+    except Cita.DoesNotExist:
+        return JsonResponse({'error': 'Cita no encontrada'}, status=404)
+
+    fecha_hora_local = timezone.localtime(cita.fecha_hora)
+
+    return JsonResponse({
+        'id': cita.id,
+        'titulo': cita.titulo,
+        'descripcion': cita.descripcion,
+        'fecha_hora': fecha_hora_local.isoformat(),
+        'fecha_hora_formatted': fecha_hora_local.strftime('%d/%m/%Y %H:%M'),
+        'duracion_minutos': cita.duracion_minutos,
+        'ubicacion': cita.ubicacion,
+        'tipo_ubicacion': cita.tipo_ubicacion,
+        'estado': cita.estado,
+        'estado_display': cita.get_estado_display(),
+        'recordatorio_enviado': cita.recordatorio_enviado,
+        'recordatorio_minutos_antes': cita.recordatorio_minutos_antes,
+        'conversacion_id': cita.conversacion.id if cita.conversacion else None,
+        'creado_en': cita.creado_en.isoformat(),
+        'actualizado_en': cita.actualizado_en.isoformat(),
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def cita_cancelar(request, cita_id):
+    """API para cancelar una cita."""
+    from asistente.models import Cita
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        cita = Cita.objects.get(id=cita_id, perfil=perfil)
+    except Cita.DoesNotExist:
+        return JsonResponse({'error': 'Cita no encontrada'}, status=404)
+
+    cita.marcar_cancelada()
+
+    return JsonResponse({
+        'success': True,
+        'mensaje': f'Cita "{cita.titulo}" cancelada',
+        'cita_id': cita.id,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def cita_confirmar(request, cita_id):
+    """API para confirmar una cita."""
+    from asistente.models import Cita
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        cita = Cita.objects.get(id=cita_id, perfil=perfil)
+    except Cita.DoesNotExist:
+        return JsonResponse({'error': 'Cita no encontrada'}, status=404)
+
+    cita.marcar_confirmada()
+
+    return JsonResponse({
+        'success': True,
+        'mensaje': f'Cita "{cita.titulo}" confirmada',
+        'cita_id': cita.id,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def cita_completar(request, cita_id):
+    """API para marcar una cita como completada."""
+    from asistente.models import Cita
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        cita = Cita.objects.get(id=cita_id, perfil=perfil)
+    except Cita.DoesNotExist:
+        return JsonResponse({'error': 'Cita no encontrada'}, status=404)
+
+    cita.marcar_completada()
+
+    return JsonResponse({
+        'success': True,
+        'mensaje': f'Cita "{cita.titulo}" marcada como completada',
+        'cita_id': cita.id,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def citas_horarios_disponibles(request):
+    """API para consultar horarios disponibles de un día específico."""
+    from datetime import datetime
+    from .services import CitaService
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    # Obtener parámetros
+    fecha_str = request.GET.get('fecha')
+    duracion = int(request.GET.get('duracion', 60))
+    hora_inicio = request.GET.get('hora_inicio', '08:00')
+    hora_fin = request.GET.get('hora_fin', '18:00')
+
+    if not fecha_str:
+        return JsonResponse({'error': 'Se requiere el parámetro fecha (formato: YYYY-MM-DD)'}, status=400)
+
+    try:
+        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+    except ValueError:
+        return JsonResponse({'error': 'Formato de fecha inválido. Use YYYY-MM-DD'}, status=400)
+
+    cita_service = CitaService()
+    horarios = cita_service.calcular_horarios_disponibles(
+        perfil=perfil,
+        fecha=fecha,
+        duracion_minutos=duracion,
+        hora_inicio=hora_inicio,
+        hora_fin=hora_fin,
+    )
+
+    return JsonResponse({
+        'fecha': fecha_str,
+        'duracion_minutos': duracion,
+        'horarios_disponibles': [h.strftime('%Y-%m-%d %H:%M') for h in horarios],
+        'total': len(horarios),
+        'texto_formateado': cita_service.formatear_horarios_disponibles(horarios),
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def test_cita_detectar(request):
+    """Endpoint de prueba para detectar intenciones de agendamiento."""
+    from .services import CitaService
+
+    perfil = obtener_perfil_usuario(request)
+    if not perfil:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        mensaje = data.get('mensaje', '')
+    except:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
+
+    cita_service = CitaService()
+
+    # Detectar intención
+    intencion = cita_service.detectar_intencion_agendamiento(mensaje)
+
+    # Extraer datos si hay intención
+    datos_cita = None
+    if intencion:
+        datos_cita = cita_service.extraer_datos_cita(mensaje, perfil)
+
+    return JsonResponse({
+        'mensaje': mensaje,
+        'intencion_detectada': intencion,
+        'datos_cita': datos_cita,
+    })

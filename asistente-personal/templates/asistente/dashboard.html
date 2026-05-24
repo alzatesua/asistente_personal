@@ -20,6 +20,7 @@
         width: min(1120px, calc(100vw - 32px));
         margin: 0 auto;
         text-align: left;
+        min-width: 0;
     }
 
     .hero {
@@ -28,6 +29,7 @@
         justify-content: space-between;
         gap: 20px;
         margin-bottom: 18px;
+        min-width: 0;
     }
 
     .hero h1 {
@@ -42,15 +44,22 @@
         color: #94a3b8;
     }
 
+    .hero-action,
+    .appointments-link {
+        flex-shrink: 0;
+        text-align: center;
+    }
+
     .nav-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 12px;
         margin-bottom: 18px;
     }
 
     .nav-card,
     .stat-card,
+    .appointments-card,
     .chart-card {
         background: rgba(15, 23, 42, 0.78);
         border: 1px solid rgba(148, 163, 184, 0.13);
@@ -81,7 +90,7 @@
 
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 12px;
         margin-bottom: 18px;
     }
@@ -102,6 +111,122 @@
         padding: 20px;
     }
 
+    .appointments-card {
+        padding: 16px;
+        margin-bottom: 18px;
+    }
+
+    .appointments-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .appointments-head h2 {
+        font-size: 16px;
+        line-height: 1.25;
+    }
+
+    .appointments-head p {
+        font-size: 12px;
+    }
+
+    .appointment-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+        gap: 8px;
+    }
+
+    .appointment-item {
+        background: rgba(30, 41, 59, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 10px;
+        padding: 0;
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    .appointment-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+        cursor: pointer;
+        list-style: none;
+        padding: 9px 10px;
+    }
+
+    .appointment-summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .appointment-summary::after {
+        content: "+";
+        color: #94a3b8;
+        flex: 0 0 auto;
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    .appointment-item[open] .appointment-summary::after {
+        content: "-";
+    }
+
+    .appointment-main {
+        min-width: 0;
+    }
+
+    .appointment-name {
+        color: #f8fafc;
+        font-weight: 750;
+        font-size: 13px;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+        min-width: 0;
+    }
+
+    .appointment-time {
+        color: #67e8f9;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+        margin-left: auto;
+    }
+
+    .appointment-date {
+        color: #94a3b8;
+        font-size: 11px;
+        line-height: 1.2;
+    }
+
+    .appointment-detail {
+        color: #cbd5e1;
+        font-size: 12px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+        padding: 0 10px 8px;
+    }
+
+    .appointment-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        color: #94a3b8;
+        font-size: 11px;
+        padding: 0 10px 10px;
+    }
+
+    .appointment-chip {
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 999px;
+        padding: 3px 7px;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+
     .chart-head {
         display: flex;
         justify-content: space-between;
@@ -113,6 +238,7 @@
     .chart-wrap {
         height: 360px;
         position: relative;
+        min-width: 0;
     }
 
     canvas {
@@ -122,14 +248,25 @@
 
     @media (max-width: 900px) {
         .hero,
-        .chart-head {
+        .chart-head,
+        .appointments-head {
             align-items: flex-start;
             flex-direction: column;
         }
 
-        .nav-grid,
-        .stats-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+        .hero-action,
+        .appointments-link {
+            width: 100%;
+        }
+
+        .hero h1 {
+            font-size: clamp(24px, 5vw, 32px);
+        }
+    }
+
+    @media (max-width: 720px) {
+        .chart-wrap {
+            height: 320px;
         }
     }
 
@@ -137,6 +274,61 @@
         .nav-grid,
         .stats-grid {
             grid-template-columns: 1fr;
+        }
+
+        .page-shell {
+            width: min(100%, calc(100vw - 16px));
+        }
+
+        .nav-card,
+        .stat-card {
+            padding: 14px;
+        }
+
+        .chart-card {
+            padding: 16px;
+        }
+
+        .appointments-card {
+            padding: 16px;
+        }
+
+        .appointment-list {
+            grid-template-columns: 1fr;
+        }
+
+        .appointment-time {
+            white-space: normal;
+        }
+
+        .chart-wrap {
+            height: 280px;
+        }
+
+        .hero h1 {
+            font-size: clamp(22px, 6vw, 28px);
+        }
+
+        .hero p {
+            font-size: 14px;
+        }
+
+        .nav-card span,
+        .stat-card strong {
+            font-size: 16px;
+        }
+    }
+
+    @media (max-width: 400px) {
+        .nav-card small,
+        .stat-card span,
+        .appointment-detail,
+        .appointment-meta {
+            font-size: 11px;
+        }
+
+        .appointment-chip {
+            width: 100%;
         }
     }
 </style>
@@ -157,23 +349,54 @@
             <h1>Uso de WhatsApp</h1>
             <p class="mt-2">Resumen de mensajes y actividad reciente del canal WhatsApp.</p>
         </div>
-        <a href="/whatsapp/" class="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white font-semibold transition">Abrir WhatsApp</a>
+        {% if 'whatsapp' in request.user.perfil_asistente.secciones_permitidas %}
+        <a href="/whatsapp/" class="hero-action px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white font-semibold transition">Abrir WhatsApp</a>
+        {% endif %}
     </section>
 
     <nav class="nav-grid">
+        {% if 'chat' in request.user.perfil_asistente.secciones_permitidas %}
         <a class="nav-card" href="/chat/"><span>Chat</span><small>Conversar con el asistente</small></a>
+        {% endif %}
+        {% if 'citas' in request.user.perfil_asistente.secciones_permitidas %}
+        <a class="nav-card" href="/citas/"><span>Citas</span><small>Agenda y reuniones</small></a>
+        {% endif %}
+        {% if 'tareas' in request.user.perfil_asistente.secciones_permitidas %}
         <a class="nav-card" href="/tareas/"><span>Tareas</span><small>Historial y segundo plano</small></a>
+        {% endif %}
+        {% if 'voz' in request.user.perfil_asistente.secciones_permitidas %}
         <a class="nav-card" href="/voz/"><span>Voz</span><small>Configurar TTS</small></a>
+        {% endif %}
+        {% if 'configurar' in request.user.perfil_asistente.secciones_permitidas %}
         <a class="nav-card" href="/configurar/"><span>Perfil</span><small>Ajustes del asistente</small></a>
+        {% endif %}
     </nav>
 
+    {% if 'whatsapp' in request.user.perfil_asistente.secciones_permitidas %}
     <section class="stats-grid">
         <div class="stat-card"><span class="muted text-sm">Total</span><strong id="stat-total">0</strong></div>
         <div class="stat-card"><span class="muted text-sm">Entrantes</span><strong id="stat-in">0</strong></div>
         <div class="stat-card"><span class="muted text-sm">Salientes</span><strong id="stat-out">0</strong></div>
         <div class="stat-card"><span class="muted text-sm">Contactos</span><strong id="stat-contacts">0</strong></div>
     </section>
+    {% endif %}
 
+    {% if 'citas' in request.user.perfil_asistente.secciones_permitidas %}
+    <section class="appointments-card">
+        <div class="appointments-head">
+            <div>
+                <h2 class="text-xl font-bold text-white">Proximas citas</h2>
+                <p class="muted text-sm">Persona, contexto, hora y telefono de las reuniones agendadas.</p>
+            </div>
+            <a href="/citas/" class="appointments-link px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm transition">Ver agenda</a>
+        </div>
+        <div id="dashboard-citas" class="appointment-list">
+            <p class="muted text-sm">Cargando citas...</p>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if 'whatsapp' in request.user.perfil_asistente.secciones_permitidas %}
     <section class="chart-card">
         <div class="chart-head">
             <div>
@@ -189,11 +412,13 @@
             <canvas id="wa-chart"></canvas>
         </div>
     </section>
+    {% endif %}
 </div>
 
 <script>
 function drawChart(data) {
     const canvas = document.getElementById('wa-chart');
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const ratio = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
@@ -207,8 +432,8 @@ function drawChart(data) {
     const height = rect.height - padding.top - padding.bottom;
     const maxValue = Math.max(1, ...data.entrantes, ...data.salientes);
     const groupWidth = width / data.labels.length;
-    const barWidth = Math.min(28, groupWidth * 0.28);
 
+    // Dibujar grid horizontal
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.14)';
     ctx.fillStyle = '#94a3b8';
     ctx.font = '12px Inter, sans-serif';
@@ -222,21 +447,94 @@ function drawChart(data) {
         ctx.fillText(Math.round(maxValue * i / 4), 8, y + 4);
     }
 
+    // Función para dibujar curva suave (spline)
+    function drawSmoothLine(values, color, fillColor) {
+        if (values.length < 2) return;
+
+        const points = values.map((val, i) => ({
+            x: padding.left + i * groupWidth + groupWidth / 2,
+            y: padding.top + height - (height * val / maxValue)
+        }));
+
+        // Dibujar área bajo la curva (gradiente)
+        const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + height);
+        gradient.addColorStop(0, fillColor.replace('0.2)', '0.3)'));
+        gradient.addColorStop(1, fillColor.replace('0.2)', '0.02)'));
+
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, padding.top + height);
+        ctx.lineTo(points[0].x, points[0].y);
+
+        // Curva suave usando bezier
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[i - 1] || points[0];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[i + 2] || p2;
+
+            const cp1x = p1.x + (p2.x - p0.x) / 6;
+            const cp1y = p1.y + (p2.y - p0.y) / 6;
+            const cp2x = p2.x - (p3.x - p1.x) / 6;
+            const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+        }
+
+        ctx.lineTo(points[points.length - 1].x, padding.top + height);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // Dibujar línea
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[i - 1] || points[0];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[i + 2] || p2;
+
+            const cp1x = p1.x + (p2.x - p0.x) / 6;
+            const cp1y = p1.y + (p2.y - p0.y) / 6;
+            const cp2x = p2.x - (p3.x - p1.x) / 6;
+            const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+        }
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // Dibujar puntos
+        points.forEach((p, i) => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+        });
+    }
+
+    // Dibujar curvas
+    drawSmoothLine(data.entrantes, '#3b82f6', 'rgba(59, 130, 246, 0.2)');
+    drawSmoothLine(data.salientes, '#14b8a6', 'rgba(20, 184, 166, 0.2)');
+
+    // Dibujar etiquetas
     data.labels.forEach((label, i) => {
         const x = padding.left + i * groupWidth + groupWidth / 2;
-        const inHeight = height * data.entrantes[i] / maxValue;
-        const outHeight = height * data.salientes[i] / maxValue;
-
-        ctx.fillStyle = '#3b82f6';
-        ctx.fillRect(x - barWidth - 3, padding.top + height - inHeight, barWidth, inHeight);
-        ctx.fillStyle = '#14b8a6';
-        ctx.fillRect(x + 3, padding.top + height - outHeight, barWidth, outHeight);
         ctx.fillStyle = '#94a3b8';
         ctx.fillText(label, x - 14, padding.top + height + 24);
     });
 }
 
 async function loadStats() {
+    if (!document.getElementById('stat-total')) return;
     const res = await fetch('/api/whatsapp/estadisticas/');
     const data = await res.json();
     document.getElementById('stat-total').textContent = data.total;
@@ -246,7 +544,58 @@ async function loadStats() {
     drawChart(data);
 }
 
+function escapeHtml(texto) {
+    return String(texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderDashboardCita(cita) {
+    const fecha = new Date(cita.fecha_hora);
+    const hora = fecha.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const dia = fecha.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+    const nombre = cita.contacto_nombre || 'Sin nombre';
+    const telefono = cita.contacto_numero || 'Sin telefono';
+    const contexto = cita.contexto_reunion || cita.descripcion || cita.titulo || 'Sin contexto';
+
+    return `<details class="appointment-item">
+        <summary class="appointment-summary">
+            <div class="appointment-main">
+                <p class="appointment-name">${escapeHtml(nombre)}</p>
+                <p class="appointment-date">${escapeHtml(dia)}</p>
+            </div>
+            <span class="appointment-time">${hora}</span>
+        </summary>
+        <p class="appointment-detail">${escapeHtml(contexto)}</p>
+        <div class="appointment-meta">
+            <span class="appointment-chip">${escapeHtml(telefono)}</span>
+            ${cita.duracion_minutos ? `<span class="appointment-chip">${cita.duracion_minutos} min</span>` : ''}
+        </div>
+    </details>`;
+}
+
+async function loadDashboardCitas() {
+    const contenedor = document.getElementById('dashboard-citas');
+    if (!contenedor) return;
+    try {
+        const res = await fetch('/api/citas/?orden=proximas&per_page=4');
+        const data = await res.json();
+        const ahora = new Date();
+        const citas = (data.citas || [])
+            .filter(cita => cita.estado !== 'cancelada' && new Date(cita.fecha_hora) >= ahora)
+            .slice(0, 4);
+
+        if (!citas.length) {
+            contenedor.innerHTML = '<p class="muted text-sm">No hay citas proximas agendadas.</p>';
+            return;
+        }
+
+        contenedor.innerHTML = citas.map(renderDashboardCita).join('');
+    } catch (e) {
+        contenedor.innerHTML = '<p class="text-sm text-red-300">No se pudieron cargar las citas.</p>';
+    }
+}
+
 loadStats();
+loadDashboardCitas();
 window.addEventListener('resize', loadStats);
 </script>
 {% endif %}

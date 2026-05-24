@@ -9,7 +9,30 @@
     .card { background: rgba(15,23,42,.78); border: 1px solid rgba(148,163,184,.13); border-radius: 18px; box-shadow: 0 18px 45px rgba(0,0,0,.24); }
     .muted { color: #94a3b8; }
     .input { background: rgba(2,6,23,.72); color: #f8fafc; border: 1px solid rgba(148,163,184,.18); border-radius: 12px; }
-    @media (max-width: 850px) { .grid { grid-template-columns: 1fr; } }
+
+    @media (max-width: 1024px) {
+        .page { width: min(100%, calc(100vw - 32px)); }
+    }
+
+    @media (max-width: 850px) {
+        .grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+        .page { width: min(100%, calc(100vw - 20px)); }
+        .card { padding: 16px; border-radius: 16px; }
+        .grid { gap: 12px; }
+        .grid.md\:col-span-2 { grid-column: auto; }
+        .grid.grid-cols-1.md\:grid-cols-2 { grid-template-columns: 1fr; }
+        h1 { font-size: clamp(22px, 5vw, 28px); }
+        h2 { font-size: 16px; }
+    }
+
+    @media (max-width: 400px) {
+        .page { width: min(100%, calc(100vw - 16px)); }
+        .card { padding: 14px; }
+        .input, .btn { padding: 10px 12px; font-size: 14px; }
+    }
 </style>
 
 {% if not perfil %}
@@ -18,7 +41,7 @@
 <div class="page">
     <div class="mb-5">
         <p class="muted text-sm">Preferencias del asistente</p>
-        <h1 class="text-3xl font-bold text-white">Voz, perfil y comandos</h1>
+        <h1 class="text-3xl font-bold text-white">Voz y perfil del asistente</h1>
     </div>
 
     <div class="grid">
@@ -47,19 +70,6 @@
                 <div class="flex justify-between gap-4"><span class="muted">CV</span><span>{% if perfil.cv_archivo %}Cargado{% else %}Sin CV{% endif %}</span></div>
             </div>
             <a href="/configurar/" class="mt-5 inline-flex px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-semibold">Editar perfil</a>
-        </section>
-
-        <section class="card p-5 md:col-span-2">
-            <h2 class="font-bold text-white mb-2">Comandos rapidos</h2>
-            <p class="muted text-sm mb-4">Usalos desde la pagina de chat.</p>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-cyan-300">/help</span><span class="muted text-sm">Ver comandos</span></a>
-                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-green-300">/crear</span><span class="muted text-sm">Crear proyecto</span></a>
-                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-orange-300">/git</span><span class="muted text-sm">Operaciones Git</span></a>
-                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-blue-300">/docker</span><span class="muted text-sm">Docker</span></a>
-                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-purple-300">/abrir</span><span class="muted text-sm">Abrir apps</span></a>
-                <a href="/chat/" class="flex justify-between p-3 rounded-xl bg-slate-800/80"><span class="font-mono text-yellow-300">/sys</span><span class="muted text-sm">Info sistema</span></a>
-            </div>
         </section>
     </div>
 </div>

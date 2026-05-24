@@ -98,6 +98,27 @@ function normalizePhoneNumber(number) {
     return clean;
 }
 
+function jidToPhoneNumber(jid) {
+    const value = String(jid || '');
+    if (!value || value.includes('@g.us') || value.includes('@lid') || value.includes('@hosted.lid')) {
+        return '';
+    }
+
+    const user = value.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (user.length < 8 || user.length > 15) {
+        return '';
+    }
+    return user;
+}
+
+function firstPhoneNumber(...values) {
+    for (const value of values) {
+        const phone = jidToPhoneNumber(value);
+        if (phone) return phone;
+    }
+    return '';
+}
+
 function unwrapMessageContent(message) {
     let content = message || {};
     const wrappers = [
@@ -291,6 +312,18 @@ async function connectToWhatsApp(lineId = DEFAULT_LINE_ID) {
                 const isGroup = remoteJid.endsWith('@g.us');
                 const senderJid = msg.key.participant || remoteJid;
                 const senderNumber = senderJid.split('@')[0];
+                const realPhoneNumber = firstPhoneNumber(
+                    msg.key.remoteJidAlt,
+                    msg.key.senderPn,
+                    msg.key.participantPn,
+                    isGroup ? null : remoteJid
+                );
+                const realSenderNumber = firstPhoneNumber(
+                    msg.key.participantPn,
+                    msg.key.participantAlt,
+                    msg.key.senderPn,
+                    senderJid
+                );
 
                 let messageText = '';
                 let messageType = 'texto';
@@ -346,12 +379,14 @@ async function connectToWhatsApp(lineId = DEFAULT_LINE_ID) {
                         linea: session.id,
                         linea_numero: session.phoneNumber,
                         numero: phoneNumber,
+                        numero_real: realPhoneNumber || (!isGroup ? realSenderNumber : ''),
                         mensaje: messageText,
                         tipo: messageType,
                         nombre: pushName,
                         es_grupo: isGroup,
                         grupo_id: isGroup ? phoneNumber : null,
                         remitente_grupo: isGroup ? senderNumber : null,
+                        remitente_grupo_real: isGroup ? realSenderNumber : null,
                         audio_base64: audioBase64,
                         audio_mimetype: audioMimetype,
                     }, {

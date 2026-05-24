@@ -13,6 +13,9 @@ services:
     ports:
       - "127.0.0.1:8095:8000"
     volumes:
+      - ./asistente:/app/asistente
+      - ./core:/app/core
+      - ./templates:/app/templates
       - staticfiles:/app/staticfiles
       - media:/app/media
       - db:/app/db
@@ -21,8 +24,8 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DEBUG=${DEBUG}
-      - ALLOWED_HOSTS=localhost,*.ia.dagi.co
-      - CSRF_TRUSTED_ORIGINS=http://localhost,https://amigo.ia.dagi.co,https://*.ia.dagi.co
+      - ALLOWED_HOSTS=localhost,127.0.0.1,bot.ia.dagi.co,portafolio-juan.dagi.co,asistente-dago.ia.dagi.co,amigo.ia.dagi.co,ia.dagi.co,*.ia.dagi.co
+      - CSRF_TRUSTED_ORIGINS=http://localhost,https://bot.ia.dagi.co,https://portafolio-juan.dagi.co,https://asistente-dago.ia.dagi.co,https://amigo.ia.dagi.co,https://ia.dagi.co,https://*.ia.dagi.co
       - REDIS_URL=redis://redis:6379/0
       - BAILEYS_SERVICE_URL=http://baileys:3002
       - DJANGO_WEBHOOK_URL=https://asistente-dago.ia.dagi.co/webhook/whatsapp/

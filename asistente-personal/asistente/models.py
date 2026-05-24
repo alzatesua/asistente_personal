@@ -1,7 +1,37 @@
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from datetime import datetime
+from django.db.models import Q
+from django.utils import timezone
+from datetime import timedelta
+
+
+SECCIONES_PERMITIDAS_DEFAULT = [
+    'chat',
+    'tareas',
+    'citas',
+    'whatsapp',
+    'facebook',
+    'voz',
+    'configurar',
+]
+
+
+SECCIONES_DISPONIBLES = [
+    ('chat', 'Chat'),
+    ('tareas', 'Tareas'),
+    ('citas', 'Citas'),
+    ('whatsapp', 'WhatsApp'),
+    ('facebook', 'Facebook'),
+    ('voz', 'Voz'),
+    ('configurar', 'Perfil'),
+    ('usuarios', 'Usuarios'),
+]
+
+
+def secciones_permitidas_default():
+    return list(SECCIONES_PERMITIDAS_DEFAULT)
+
 
 class PerfilAsistente(models.Model):
     usuario = models.OneToOneField(
@@ -29,6 +59,15 @@ class PerfilAsistente(models.Model):
     meta_app_secret = models.CharField(max_length=255, blank=True, default='')
     meta_verify_token = models.CharField(max_length=255, blank=True, default='')
     meta_webhook_url = models.URLField(max_length=500, blank=True, default='')
+    secciones_permitidas = models.JSONField(default=secciones_permitidas_default, blank=True)
+    usar_groq_respuestas_normales = models.BooleanField(
+        default=False,
+        help_text='Usar Groq para respuestas normales del bot'
+    )
+    usar_groq_lexico_complejo = models.BooleanField(
+        default=False,
+        help_text='Escalar a Groq para respuestas complejas o cuando el modelo base responda debil'
+    )
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
 
@@ -38,6 +77,9 @@ class PerfilAsistente(models.Model):
 
     def __str__(self):
         return f"{self.nombre_asistente} - {self.nombre_usuario}"
+
+    def puede_ver_seccion(self, seccion):
+        return seccion in (self.secciones_permitidas or [])
 
 
 class Conversacion(models.Model):
@@ -150,7 +192,7 @@ class TareaProgramada(models.Model):
 
     def clean(self):
         """Validar que programado_para sea en el futuro y parámetros según tipo."""
-        if self.programado_para and self.programado_para <= datetime.now():
+        if self.programado_para and self.programado_para <= timezone.now():
             raise ValidationError({'programado_para': 'La hora debe ser en el futuro'})
 
         # Validar parámetros según tipo
@@ -169,10 +211,138 @@ class TareaProgramada(models.Model):
         self.estado = 'completada' if exitoso else 'fallida'
         self.resultado = resultado
         self.error = error
-        self.ejecutado_en = datetime.now()
+        self.ejecutado_en = timezone.now()
         self.save()
 
     def cancelar(self):
         """Cancelar la tarea."""
         self.estado = 'cancelada'
         self.save()
+
+
+class Cita(models.Model):
+    """Modelo para citas, reuniones y agendamientos."""
+
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('confirmada', 'Confirmada'),
+        ('completada', 'Completada'),
+        ('cancelada', 'Cancelada'),
+    ]
+
+    TIPO_UBICACION_CHOICES = [
+        ('presencial', 'Presencial'),
+        ('virtual', 'Virtual'),
+        ('telefonica', 'Telefónica'),
+    ]
+
+    perfil = models.ForeignKey(PerfilAsistente, on_delete=models.CASCADE, related_name='citas')
+    conversacion = models.ForeignKey(Conversacion, on_delete=models.CASCADE, related_name='citas', null=True, blank=True)
+
+    # Información básica
+    titulo = models.CharField(max_length=200)
+    descripcion = models.TextField(null=True, blank=True)
+
+    # Fecha y hora
+    fecha_hora = models.DateTimeField(db_index=True)
+    duracion_minutos = models.PositiveIntegerField(default=60, help_text='Duración en minutos')
+
+    # Ubicación
+    ubicacion = models.CharField(max_length=200, null=True, blank=True)
+    tipo_ubicacion = models.CharField(max_length=20, choices=TIPO_UBICACION_CHOICES, default='presencial')
+
+    # Estado y recordatorios
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    recordatorio_enviado = models.BooleanField(default=False)
+    recordatorio_minutos_antes = models.PositiveIntegerField(default=5)
+
+    # Metadatos
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    # Tarea de recordatorio asociada
+    tarea_recordatorio = models.ForeignKey(TareaProgramada, on_delete=models.SET_NULL, null=True, blank=True, related_name='cita_asociada')
+
+    class Meta:
+        ordering = ['fecha_hora']
+        verbose_name = 'Cita'
+        verbose_name_plural = 'Citas'
+        indexes = [
+            models.Index(fields=['estado', 'fecha_hora']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['perfil', 'fecha_hora'],
+                condition=~Q(estado='cancelada'),
+                name='cita_unica_por_perfil_fecha_hora_activa',
+            ),
+        ]
+
+    def __str__(self):
+        fecha_local = timezone.localtime(self.fecha_hora)
+        return f"[{self.get_estado_display()}] {self.titulo} - {fecha_local.strftime('%Y-%m-%d %H:%M')}"
+
+    def marcar_confirmada(self):
+        """Marcar la cita como confirmada."""
+        self.estado = 'confirmada'
+        self.save()
+
+    def marcar_completada(self):
+        """Marcar la cita como completada."""
+        self.estado = 'completada'
+        self.save()
+
+    def marcar_cancelada(self):
+        """Marcar la cita como cancelada."""
+        self.estado = 'cancelada'
+        # Cancelar también la tarea de recordatorio si existe
+        if self.tarea_recordatorio and self.tarea_recordatorio.estado == 'pendiente':
+            self.tarea_recordatorio.cancelar()
+        self.save()
+
+    def crear_recordatorio(self):
+        """Crear tarea de recordatorio automático."""
+        from asistente.services import SchedulerService
+
+        if self.tarea_recordatorio:
+            return self.tarea_recordatorio
+
+        scheduler = SchedulerService()
+        hora_recordatorio = self.fecha_hora - timedelta(minutes=self.recordatorio_minutos_antes)
+
+        # Obtener número de WhatsApp de la conversación
+        numero_whatsapp = None
+        if self.conversacion:
+            numero_whatsapp = self.conversacion.numero_whatsapp
+
+        # Extraer línea si el número tiene formato "linea:numero"
+        linea = 'principal'
+        if numero_whatsapp and ':' in numero_whatsapp:
+            partes = numero_whatsapp.split(':')
+            linea = partes[0]
+            numero_whatsapp = partes[1] if len(partes) > 1 else partes[0]
+
+        fecha_local = timezone.localtime(self.fecha_hora)
+        mensaje_recordatorio = (
+            f"📅 Recordatorio de cita: {self.titulo}\n"
+            f"🕐 En {self.recordatorio_minutos_antes} minutos ({fecha_local.strftime('%d/%m %H:%M')})\n"
+        )
+        if self.ubicacion:
+            mensaje_recordatorio += f"📍 {self.ubicacion}\n"
+
+        tarea = TareaProgramada.objects.create(
+            perfil=self.perfil,
+            titulo=f"Recordatorio: {self.titulo}",
+            tipo_accion='whatsapp',
+            parametros={
+                'numero': numero_whatsapp or '',
+                'mensaje': mensaje_recordatorio,
+                'linea': linea,
+            },
+            programado_para=hora_recordatorio,
+            estado='pendiente',
+        )
+
+        self.tarea_recordatorio = tarea
+        self.save()
+        return tarea

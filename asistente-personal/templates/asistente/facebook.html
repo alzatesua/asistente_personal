@@ -63,9 +63,49 @@
     .compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; }
     .empty { border: 1px dashed rgba(148,163,184,.2); border-radius: 14px; padding: 24px; text-align: center; color: #8fa3bd; background: rgba(15,23,42,.45); }
     .code { font-family: 'JetBrains Mono', monospace; font-size: 12px; word-break: break-all; }
-    @media (max-width: 1280px) { .grid { grid-template-columns: minmax(340px, .9fr) minmax(0, 1.1fr); } .right { grid-column: 1 / -1; } }
-    @media (max-width: 900px) { .hero, .grid { grid-template-columns: 1fr; } .stats { min-width: 0; } .list { max-height: none; } .right { grid-column: auto; } }
-    @media (max-width: 560px) { .page { width: min(100%, calc(100vw - 24px)); } .stats, .toggle-grid, .filter-grid, .compose { grid-template-columns: 1fr; } }
+
+    @media (max-width: 1400px) {
+        .grid { grid-template-columns: minmax(300px, .8fr) minmax(380px, 1.2fr) minmax(320px, .85fr); gap: 16px; }
+    }
+
+    @media (max-width: 1280px) {
+        .grid { grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); gap: 16px; }
+        .right { grid-column: 1 / -1; }
+        .title { font-size: clamp(26px, 4vw, 36px); }
+    }
+
+    @media (max-width: 900px) {
+        .hero, .grid { grid-template-columns: 1fr; }
+        .stats { min-width: 0; }
+        .list { max-height: none; }
+        .right { grid-column: auto; }
+        .title { font-size: clamp(24px, 5vw, 32px); }
+    }
+
+    @media (max-width: 640px) {
+        .page { width: min(100%, calc(100vw - 16px)); }
+        .card { padding: 16px; border-radius: 16px; }
+        .hero { margin-bottom: 16px; }
+        .copy { font-size: 14px; }
+        .stat-value { font-size: 18px; }
+        .btn { padding: 7px 9px; font-size: 12px; min-height: 36px; }
+        .pill { font-size: 11px; padding: 3px 8px; }
+    }
+
+    @media (max-width: 560px) {
+        .stats, .toggle-grid, .filter-grid, .compose { grid-template-columns: 1fr; }
+        .title { font-size: clamp(22px, 6vw, 30px); }
+        .panel-title { font-size: 15px; }
+        .stats { gap: 8px; }
+        .stat { padding: 12px; }
+    }
+
+    @media (max-width: 400px) {
+        .page { width: min(100%, calc(100vw - 12px)); }
+        .card { padding: 12px; }
+        .bubble { max-width: min(88%, 280px); }
+        .compose { grid-template-columns: 1fr; }
+    }
 </style>
 
 <div class="page">
@@ -136,17 +176,7 @@
             </section>
         </div>
 
-        <div class="stack right">
-            <section class="card p-5">
-                <div class="panel-head">
-                    <h2 class="panel-title">Cómo conectar</h2>
-                </div>
-                <div class="muted text-sm leading-6">
-                    <p>Configura estos valores en la pantalla Configurar, expón el webhook público con HTTPS y suscribe el objeto Page en Meta Developers.</p>
-                    <p class="mt-3">Para responder mensajes necesitas `pages_messaging`; para recibir eventos y suscribir webhooks, `pages_manage_metadata`; para leer y responder comentarios, `pages_read_engagement` y `pages_manage_engagement`.</p>
-                </div>
-            </section>
-        </div>
+        
     </div>
 </div>
 

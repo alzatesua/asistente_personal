@@ -87,11 +87,55 @@
         @keyframes cursor-blink {
             50% { opacity: 0; }
         }
+
+        /* Responsive styles */
+        @media (max-width: 480px) {
+            .login-shell {
+                padding: 20px 16px;
+                border-radius: 16px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .glass-input {
+                padding: 10px 12px;
+            }
+
+            .access-btn {
+                padding: 12px 16px;
+                font-size: 14px;
+            }
+        }
+
+        @media (max-width: 400px) {
+            main {
+                padding: 16px 12px;
+            }
+
+            .login-shell {
+                padding: 16px 14px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            p {
+                font-size: 13px;
+            }
+
+            .brand-mark {
+                width: 44px;
+                height: 44px;
+            }
+        }
     </style>
 </head>
 <body class="min-h-screen text-white">
-    <main class="relative min-h-screen flex items-center justify-center px-4 py-10">
-        <section class="login-shell w-full max-w-md rounded-2xl p-7 backdrop-blur-2xl sm:p-8">
+    <main class="relative min-h-screen flex items-center justify-center px-4 py-6 sm:py-10">
+        <section class="login-shell w-full max-w-md rounded-2xl p-5 sm:p-7 md:p-8 backdrop-blur-2xl">
             <div class="mb-7 flex items-start justify-between gap-4">
                 <div>
                     <div class="brand-mark mb-5 flex h-12 w-12 items-center justify-center rounded-2xl">

@@ -56,7 +56,7 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': Path('/app/db/db.sqlite3'),
     }
 }
 
@@ -83,6 +83,9 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False') == 'True'
 
+# CSRF Trusted Origins
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if os.getenv('CSRF_TRUSTED_ORIGINS') else []
+
 CORS_ALLOW_ALL_ORIGINS = True
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('DATA_UPLOAD_MAX_MEMORY_SIZE', 25 * 1024 * 1024))
 
@@ -99,6 +102,10 @@ DESKTOP_API_USERNAME = os.getenv('DESKTOP_API_USERNAME', '').strip()
 ZAI_API_KEY = os.getenv('ZAI_API_KEY')
 ZAI_BASE_URL = os.getenv('ZAI_BASE_URL')
 ZAI_MODEL = os.getenv('ZAI_MODEL', 'glm-4')
+
+# Groq / OpenAI-compatible chat completions
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GROQ_MODEL_NORMAL = os.getenv('GROQ_MODEL_NORMAL', 'llama-3.1-8b-instant')
 
 # Baileys
 BAILEYS_SERVICE_URL = os.getenv('BAILEYS_SERVICE_URL', 'http://localhost:3002')

@@ -52,9 +52,16 @@ urlpatterns = [
     path('api/tareas/<str:tarea_id>/', protegida(views.tarea_detalle), name='tarea_detalle'),
     path('api/tareas/<str:tarea_id>/resumen-voz/', protegida(views.tarea_resumen_voz), name='tarea_resumen_voz'),
     path('api/acciones/ejecutar/', protegida(views.ejecutar_accion_pendiente), name='ejecutar_accion_pendiente'),
-    path('api/terminal/ejecutar/', protegida(views.terminal_ejecutar), name='terminal_ejecutar'),
-    path('api/terminal/permisos/', protegida(views.gestion_permisos), name='gestion_permisos'),
-    path('api/devtools/', protegida(views.devtools_accion), name='devtools_accion'),
+
+    # Citas
+    path('citas/', protegida(views.citas_page), name='citas_page'),
+    path('api/citas/', protegida(views.citas_listar), name='citas_listar'),
+    path('api/citas/<int:cita_id>/', protegida(views.cita_detalle), name='cita_detalle'),
+    path('api/citas/<int:cita_id>/cancelar/', protegida(views.cita_cancelar), name='cita_cancelar'),
+    path('api/citas/<int:cita_id>/confirmar/', protegida(views.cita_confirmar), name='cita_confirmar'),
+    path('api/citas/<int:cita_id>/completar/', protegida(views.cita_completar), name='cita_completar'),
+    path('api/citas/horarios-disponibles/', protegida(views.citas_horarios_disponibles), name='citas_horarios_disponibles'),
+    path('api/test/cita-detectar/', protegida(views.test_cita_detectar), name='test_cita_detectar'),
 
     # Alarmas y Tareas Programadas
     path('api/alarmas/crear/', protegida(views.crear_alarma), name='crear_alarma'),
@@ -63,4 +70,5 @@ urlpatterns = [
     path('api/alarmas/resumen/', protegida(views.alarmas_resumen), name='alarmas_resumen'),
     path('api/alarmas/<int:tarea_id>/cancelar/', protegida(views.cancelar_alarma), name='cancelar_alarma'),
     path('api/scheduler/iniciar/', protegida(views.scheduler_iniciar), name='scheduler_iniciar'),
+    path('privacidad/', views.politica_privacidad, name='politica_privacidad'),
 ]

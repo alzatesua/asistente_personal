@@ -152,6 +152,284 @@
         color: #cbd5e1;
     }
 
+    .section-permission {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: #cbd5e1;
+        font-size: 12px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .section-permission input {
+        flex: 0 0 auto;
+    }
+
+    .modal-sections {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .permissions-cell {
+        min-width: 72px;
+    }
+
+    .icon-btn {
+        width: 36px;
+        height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid rgba(96, 165, 250, .22);
+        background: rgba(15, 23, 42, .82);
+        color: #93c5fd;
+        cursor: pointer;
+        transition: .2s ease;
+    }
+
+    .icon-btn:hover {
+        color: #f8fafc;
+        border-color: rgba(96, 165, 250, .48);
+        background: rgba(30, 41, 59, .95);
+    }
+
+    .permissions-modal {
+        max-width: 880px;
+        padding: 0;
+        overflow: hidden;
+        background:
+            radial-gradient(circle at top left, rgba(96, 165, 250, .16), transparent 34%),
+            rgba(15, 23, 42, .96);
+    }
+
+    .permissions-hero {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 24px 24px 18px;
+        border-bottom: 1px solid rgba(148, 163, 184, .10);
+    }
+
+    .permissions-user {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+    }
+
+    .permissions-avatar {
+        width: 46px;
+        height: 46px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #2563eb, #14b8a6);
+        color: white;
+        font-weight: 800;
+        letter-spacing: .04em;
+        box-shadow: 0 14px 34px rgba(37, 99, 235, .28);
+        flex: 0 0 auto;
+    }
+
+    .permissions-kicker {
+        color: #60a5fa;
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        margin-bottom: 5px;
+    }
+
+    .permissions-title {
+        color: #f8fafc;
+        font-size: 20px;
+        font-weight: 800;
+        line-height: 1.1;
+        margin: 0;
+    }
+
+    .permissions-subtitle {
+        color: #94a3b8;
+        font-size: 13px;
+        margin-top: 6px;
+    }
+
+    .permissions-body {
+        padding: 20px 24px 24px;
+    }
+
+    .permissions-board {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+    }
+
+    .permissions-column {
+        border: 1px solid rgba(148, 163, 184, .14);
+        border-radius: 8px;
+        background:
+            linear-gradient(180deg, rgba(30, 41, 59, .56), rgba(2, 6, 23, .34));
+        min-height: 320px;
+        padding: 14px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03);
+    }
+
+    .permissions-column-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .permissions-column h3,
+    .permissions-column-title {
+        color: #e2e8f0;
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .permissions-count {
+        min-width: 28px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        background: rgba(96, 165, 250, .12);
+        color: #bfdbfe;
+        font-size: 12px;
+        font-weight: 800;
+    }
+
+    .permission-drop {
+        min-height: 250px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        border-radius: 8px;
+        outline: 1px dashed rgba(148, 163, 184, .10);
+        outline-offset: -4px;
+        padding: 6px;
+        transition: .18s ease;
+    }
+
+    .permission-drop.drag-over {
+        outline-color: rgba(45, 212, 191, .65);
+        background: rgba(59, 130, 246, .08);
+        box-shadow: inset 0 0 0 1px rgba(45, 212, 191, .16);
+    }
+
+    .permission-pill {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, .16);
+        background: rgba(15, 23, 42, .74);
+        color: #e2e8f0;
+        padding: 11px;
+        font-size: 13px;
+        cursor: grab;
+        user-select: none;
+        transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    }
+
+    .permission-pill:hover {
+        transform: translateY(-1px);
+        border-color: rgba(96, 165, 250, .38);
+        background: rgba(30, 41, 59, .90);
+    }
+
+    .permission-pill:active {
+        cursor: grabbing;
+    }
+
+    .permission-pill-main {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .permission-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--permission-color, #60a5fa);
+        box-shadow: 0 0 0 4px rgba(96, 165, 250, .12);
+        flex: 0 0 auto;
+    }
+
+    .permission-pill button {
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 8px;
+        background: rgba(96, 165, 250, .14);
+        color: #bfdbfe;
+        cursor: pointer;
+        font-weight: 800;
+        transition: .18s ease;
+    }
+
+    .permission-pill button:hover {
+        background: rgba(96, 165, 250, .25);
+        color: #f8fafc;
+    }
+
+    .permission-empty {
+        display: grid;
+        place-items: center;
+        min-height: 110px;
+        color: #64748b;
+        font-size: 12px;
+        padding: 12px;
+        text-align: center;
+    }
+
+    .staff-row {
+        margin-top: 16px;
+        padding: 14px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, .12);
+        background: rgba(2, 6, 23, .30);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+    }
+
+    .staff-row strong {
+        display: block;
+        color: #f8fafc;
+        font-size: 13px;
+        margin-bottom: 3px;
+    }
+
+    .staff-row small {
+        color: #94a3b8;
+        font-size: 12px;
+    }
+
+    .permissions-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        padding-top: 18px;
+    }
+
     /* Switch */
     .switch {
         position: relative;
@@ -200,6 +478,151 @@
         flex-wrap: wrap;
     }
 
+    .usage-cell {
+        min-width: 200px;
+    }
+
+    .model-switches {
+        display: grid;
+        gap: 8px;
+        min-width: 150px;
+    }
+
+    .model-switch-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: #cbd5e1;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .usage-card {
+        display: grid;
+        grid-template-columns: 150px 34px;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .usage-chart {
+        width: 150px;
+        height: 60px;
+        display: block;
+        border-radius: 8px;
+        background:
+            linear-gradient(180deg, rgba(37, 99, 235, .10), rgba(20, 184, 166, .06)),
+            rgba(2, 6, 23, .55);
+        border: 1px solid rgba(96, 165, 250, .16);
+        overflow: hidden;
+    }
+
+    .chart-grid {
+        stroke: rgba(148, 163, 184, .10);
+        stroke-width: 1;
+    }
+
+    .chart-area-in {
+        fill: rgba(59, 130, 246, .18);
+    }
+
+    .chart-area-out {
+        fill: rgba(20, 184, 166, .16);
+    }
+
+    .chart-line-in {
+        fill: none;
+        stroke: #3b82f6;
+        stroke-width: 2.4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .chart-line-out {
+        fill: none;
+        stroke: #2dd4bf;
+        stroke-width: 2.4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .chart-dot-in {
+        fill: #f8fafc;
+        stroke: #3b82f6;
+        stroke-width: 1.8;
+    }
+
+    .chart-dot-out {
+        fill: #f8fafc;
+        stroke: #2dd4bf;
+        stroke-width: 1.8;
+    }
+
+    .eye-btn {
+        width: 34px;
+        height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid rgba(96, 165, 250, .22);
+        background: rgba(15, 23, 42, .82);
+        color: #93c5fd;
+        font-size: 17px;
+        cursor: pointer;
+        transition: .2s ease;
+    }
+
+    .eye-btn:hover {
+        color: #f8fafc;
+        border-color: rgba(96, 165, 250, .48);
+        background: rgba(30, 41, 59, .95);
+    }
+
+    .usage-summary {
+        min-width: 0;
+    }
+
+    .usage-total {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        color: #f8fafc;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .usage-total span {
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 500;
+    }
+
+    .usage-channel {
+        margin-top: 5px;
+        color: #38bdf8;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .usage-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 8px;
+    }
+
+    .usage-tag {
+        padding: 3px 7px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, .86);
+        border: 1px solid rgba(148, 163, 184, .13);
+        color: #cbd5e1;
+        font-size: 10px;
+        white-space: nowrap;
+    }
+
     /* Form inline */
     .form-inline {
         display: flex;
@@ -230,6 +653,236 @@
         padding: 24px;
         width: 90%;
         max-width: 500px;
+    }
+
+    .usage-modal {
+        max-width: 860px;
+        max-height: 88vh;
+        overflow-y: auto;
+    }
+
+    .usage-modal-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        margin-bottom: 18px;
+    }
+
+    .usage-modal-subtitle {
+        color: #94a3b8;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .usage-modal-close {
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, .18);
+        background: rgba(15, 23, 42, .8);
+        color: #cbd5e1;
+        cursor: pointer;
+    }
+
+    .usage-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 18px;
+    }
+
+    .usage-detail-card {
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, .12);
+        background: rgba(2, 6, 23, .42);
+        padding: 12px;
+    }
+
+    .usage-detail-value {
+        color: #f8fafc;
+        font-size: 22px;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .usage-detail-label {
+        color: #94a3b8;
+        font-size: 11px;
+        margin-top: 7px;
+        text-transform: uppercase;
+    }
+
+    .usage-section-title {
+        color: #e2e8f0;
+        font-size: 13px;
+        font-weight: 700;
+        margin: 18px 0 10px;
+        text-transform: uppercase;
+    }
+
+    .usage-detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid rgba(148, 163, 184, .10);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .usage-detail-table th,
+    .usage-detail-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(148, 163, 184, .08);
+        font-size: 12px;
+    }
+
+    .usage-detail-table th {
+        background: rgba(15, 23, 42, .72);
+    }
+
+    .usage-mountain {
+        border: 1px solid rgba(148, 163, 184, .12);
+        border-radius: 8px;
+        background:
+            linear-gradient(180deg, rgba(37, 99, 235, .12), rgba(2, 6, 23, .18)),
+            rgba(2, 6, 23, .42);
+        padding: 14px;
+        overflow: hidden;
+    }
+
+    .usage-mountain-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        align-items: flex-start;
+        margin-bottom: 10px;
+    }
+
+    .usage-mountain-title {
+        color: #f8fafc;
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+
+    .usage-mountain-total {
+        color: #94a3b8;
+        font-size: 12px;
+        margin-top: 4px;
+    }
+
+    .usage-mountain-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+    }
+
+    .usage-mountain-key {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #cbd5e1;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .usage-mountain-swatch {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--swatch);
+        box-shadow: 0 0 0 3px rgba(96, 165, 250, .12);
+    }
+
+    .usage-mountain-svg {
+        display: block;
+        width: 100%;
+        height: 300px;
+    }
+
+    .mountain-grid {
+        stroke: rgba(148, 163, 184, .10);
+        stroke-width: 1;
+    }
+
+    .mountain-area-in {
+        fill: rgba(59, 130, 246, .28);
+    }
+
+    .mountain-area-out {
+        fill: rgba(20, 184, 166, .24);
+    }
+
+    .mountain-line-in,
+    .mountain-line-out {
+        fill: none;
+        stroke-width: 3.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .mountain-line-in {
+        stroke: #60a5fa;
+    }
+
+    .mountain-line-out {
+        stroke: #2dd4bf;
+    }
+
+    .mountain-dot-in,
+    .mountain-dot-out {
+        fill: #f8fafc;
+        stroke-width: 2.2;
+    }
+
+    .mountain-dot-in {
+        stroke: #60a5fa;
+    }
+
+    .mountain-dot-out {
+        stroke: #2dd4bf;
+    }
+
+    .mountain-axis-label {
+        fill: #94a3b8;
+        font-size: 12px;
+    }
+
+    .mountain-empty {
+        fill: #94a3b8;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .usage-mountain-days {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+    }
+
+    .usage-mountain-day {
+        min-width: 0;
+        border-radius: 8px;
+        background: rgba(15, 23, 42, .56);
+        border: 1px solid rgba(148, 163, 184, .10);
+        padding: 8px;
+    }
+
+    .usage-mountain-date {
+        color: #94a3b8;
+        font-size: 11px;
+        margin-bottom: 5px;
+    }
+
+    .usage-mountain-counts {
+        display: flex;
+        gap: 6px;
+        color: #e2e8f0;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
     }
     .modal-title {
         font-size: 18px;
@@ -296,6 +949,163 @@
         height: 16px;
         cursor: pointer;
     }
+
+    /* Responsive styles */
+    @media (max-width: 1024px) {
+        .users-page {
+            padding: 0 12px;
+        }
+
+        .panel-header,
+        .panel-body {
+            padding: 16px;
+        }
+
+        table {
+            font-size: 13px;
+        }
+
+        th, td {
+            padding: 10px 12px;
+        }
+
+        .field {
+            padding: 8px 10px;
+            font-size: 13px;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .users-page {
+            padding: 0 8px;
+        }
+
+        .panel-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .panel-header .flex {
+            width: 100%;
+            justify-content: space-between;
+        }
+
+        h1 {
+            font-size: 20px;
+        }
+
+        .btn {
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            min-width: 1080px;
+        }
+
+        .modal {
+            width: 95%;
+            padding: 20px;
+        }
+
+        .usage-detail-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .permissions-board {
+            grid-template-columns: 1fr;
+        }
+
+        .usage-mountain-head {
+            flex-direction: column;
+        }
+
+        .usage-mountain-legend {
+            justify-content: flex-start;
+        }
+
+        .usage-mountain-svg {
+            height: 240px;
+        }
+
+        .usage-mountain-days {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .actions-cell {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .actions-cell .btn {
+            width: 100%;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .panel-header,
+        .panel-body {
+            padding: 12px;
+        }
+
+        h1 {
+            font-size: 18px;
+        }
+
+        .subtitle {
+            font-size: 12px;
+        }
+
+        .btn {
+            padding: 7px 10px;
+            font-size: 11px;
+        }
+
+        .field {
+            padding: 8px 10px;
+            font-size: 12px;
+        }
+
+        .badge {
+            padding: 3px 8px;
+            font-size: 10px;
+        }
+
+        .modal {
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .usage-detail-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .usage-mountain-days {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .switch {
+            width: 38px;
+            height: 22px;
+        }
+
+        .switch-slider:before {
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+        }
+
+        .switch input:checked + .switch-slider:before {
+            transform: translateX(16px);
+        }
+    }
 </style>
 
 <div class="users-page">
@@ -336,7 +1146,9 @@
                         <th>Usuario</th>
                         <th>Empresa</th>
                         <th>Correo</th>
-                        <th>Roles</th>
+                        <th>Uso del bot</th>
+                        <th>Modelos</th>
+                        <th>Secciones</th>
                         <th>Estado</th>
                         <th>Acciones</th>
                     </tr>
@@ -347,6 +1159,7 @@
                         <td>
                             <form method="post" id="form-{{ usuario.id }}" style="display:none;">
                                 {% csrf_token %}
+                                <input type="hidden" name="accion" value="actualizar">
                                 <input type="hidden" name="user_id" value="{{ usuario.id }}">
                             </form>
                         </td>
@@ -355,7 +1168,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="accion" value="actualizar">
                                 <input type="hidden" name="user_id" value="{{ usuario.id }}">
-                                <input name="username" class="field" style="width: 140px;" value="{{ usuario.username }}" required>
+                                <input name="username" data-user-id="{{ usuario.id }}" data-user-field="username" class="field" style="width: 140px;" value="{{ usuario.username }}" required>
                             </form>
                         </td>
                         <td>
@@ -363,7 +1176,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="accion" value="actualizar">
                                 <input type="hidden" name="user_id" value="{{ usuario.id }}">
-                                <input name="nombre_empresa" class="field" style="width: 160px;" value="{{ usuario.perfil_asistente.nombre_usuario|default:'' }}">
+                                <input name="nombre_empresa" data-user-id="{{ usuario.id }}" data-user-field="nombre_empresa" class="field" style="width: 160px;" value="{{ usuario.perfil_asistente.nombre_usuario|default:'' }}">
                             </form>
                         </td>
                         <td>
@@ -371,19 +1184,60 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="accion" value="actualizar">
                                 <input type="hidden" name="user_id" value="{{ usuario.id }}">
-                                <input name="email" type="email" class="field" style="width: 200px;" value="{{ usuario.email }}">
+                                <input name="email" data-user-id="{{ usuario.id }}" data-user-field="email" type="email" class="field" style="width: 200px;" value="{{ usuario.email }}">
                             </form>
                         </td>
+                        <td class="usage-cell">
+                            <div class="usage-card">
+                                <svg class="usage-chart" viewBox="0 0 150 60" role="img" aria-label="Entrantes y salientes de los últimos 7 días">
+                                    <line class="chart-grid" x1="0" y1="14" x2="150" y2="14"></line>
+                                    <line class="chart-grid" x1="0" y1="32" x2="150" y2="32"></line>
+                                    <line class="chart-grid" x1="0" y1="50" x2="150" y2="50"></line>
+                                    {% if usuario.uso_bot.chart.area_entrantes %}
+                                    <path class="chart-area-in" d="{{ usuario.uso_bot.chart.area_entrantes }}"></path>
+                                    <path class="chart-area-out" d="{{ usuario.uso_bot.chart.area_salientes }}"></path>
+                                    <path class="chart-line-in" d="{{ usuario.uso_bot.chart.entrantes }}"></path>
+                                    <path class="chart-line-out" d="{{ usuario.uso_bot.chart.salientes }}"></path>
+                                    {% for punto in usuario.uso_bot.chart.puntos_entrantes %}
+                                    <circle class="chart-dot-in" cx="{{ punto.x }}" cy="{{ punto.y }}" r="2.3">
+                                        <title>{{ punto.valor }} entrantes</title>
+                                    </circle>
+                                    {% endfor %}
+                                    {% for punto in usuario.uso_bot.chart.puntos_salientes %}
+                                    <circle class="chart-dot-out" cx="{{ punto.x }}" cy="{{ punto.y }}" r="2.3">
+                                        <title>{{ punto.valor }} salientes</title>
+                                    </circle>
+                                    {% endfor %}
+                                    {% endif %}
+                                </svg>
+                                <button type="button" class="eye-btn" onclick="abrirUsoModal({{ usuario.id }})" title="Ver detalles de uso" aria-label="Ver detalles de uso de {{ usuario.username }}">&#128065;</button>
+                            </div>
+                        </td>
                         <td>
-                            <form method="post" class="form-inline">
-                                {% csrf_token %}
-                                <input type="hidden" name="accion" value="actualizar">
-                                <input type="hidden" name="user_id" value="{{ usuario.id }}">
-                                <label class="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" name="is_staff" {% if usuario.is_staff %}checked{% endif %}>
-                                    <span style="font-size: 12px; color: #94a3b8;">Staff</span>
+                            <div class="model-switches">
+                                <label class="model-switch-row">
+                                    <span>Groq normal</span>
+                                    <span class="switch">
+                                        <input type="checkbox" data-user-id="{{ usuario.id }}" data-user-field="usar_groq_respuestas_normales" {% if usuario.perfil_asistente.usar_groq_respuestas_normales %}checked{% endif %}>
+                                        <span class="switch-slider"></span>
+                                    </span>
                                 </label>
-                            </form>
+                                <label class="model-switch-row">
+                                    <span>Lexico complejo</span>
+                                    <span class="switch">
+                                        <input type="checkbox" data-user-id="{{ usuario.id }}" data-user-field="usar_groq_lexico_complejo" {% if usuario.perfil_asistente.usar_groq_lexico_complejo %}checked{% endif %}>
+                                        <span class="switch-slider"></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </td>
+                        <td class="permissions-cell">
+                            <button type="button" class="icon-btn" onclick="abrirPermisosModal({{ usuario.id }})" title="Editar secciones" aria-label="Editar secciones de {{ usuario.username }}">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="M4 5h16M4 12h16M4 19h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    <path d="M8 5v0M14 12v0M10 19v0" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+                                </svg>
+                            </button>
                         </td>
                         <td>
                             <form method="post" id="toggle-form-{{ usuario.id }}" style="display:none;">
@@ -412,7 +1266,7 @@
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7">
+                        <td colspan="9">
                             <div class="empty-state">
                                 No hay usuarios registrados
                             </div>
@@ -432,6 +1286,7 @@
         <form method="post" id="newUserForm">
             {% csrf_token %}
             <input type="hidden" name="accion" value="crear">
+            <input type="hidden" name="secciones_enviadas" value="1">
             <div class="modal-field">
                 <label>Usuario *</label>
                 <input name="username" class="field" placeholder="Ej. juan.perez" required>
@@ -449,10 +1304,32 @@
                 <input name="password" type="password" class="field" placeholder="••••••••" required>
             </div>
             <div class="modal-field">
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" name="is_staff">
-                    <span style="color: #e2e8f0; font-size: 14px;">Staff</span>
-                </label>
+                <label>Secciones permitidas</label>
+                <div class="modal-sections">
+                    {% for codigo, etiqueta in secciones_disponibles %}
+                    <label class="section-permission">
+                        <input type="checkbox" name="secciones" value="{{ codigo }}">
+                        <span>{{ etiqueta }}</span>
+                    </label>
+                    {% endfor %}
+                    <label class="section-permission">
+                        <input type="checkbox" name="is_staff">
+                        <span>Staff</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-field">
+                <label>Modelos de respuesta</label>
+                <div class="modal-sections">
+                    <label class="section-permission">
+                        <input type="checkbox" name="usar_groq_respuestas_normales">
+                        <span>Groq normal</span>
+                    </label>
+                    <label class="section-permission">
+                        <input type="checkbox" name="usar_groq_lexico_complejo">
+                        <span>Lexico complejo</span>
+                    </label>
+                </div>
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -482,7 +1359,98 @@
     </div>
 </div>
 
+<!-- Modal Permisos -->
+<div class="modal-overlay" id="permissionsModal">
+    <div class="modal permissions-modal">
+        <div class="permissions-hero">
+            <div class="permissions-user">
+                <div class="permissions-avatar" id="permissionsAvatar">US</div>
+                <div>
+                    <div class="permissions-kicker">Control de acceso</div>
+                    <h2 class="permissions-title" id="permissionsModalTitle">Secciones del usuario</h2>
+                    <p class="permissions-subtitle" id="permissionsModalSubtitle"></p>
+                </div>
+            </div>
+            <button type="button" class="usage-modal-close" onclick="cerrarPermisosModal()" aria-label="Cerrar">x</button>
+        </div>
+        <div class="permissions-body">
+            <div class="permissions-board">
+                <section class="permissions-column">
+                    <div class="permissions-column-head">
+                        <span class="permissions-column-title">Disponibles</span>
+                        <span class="permissions-count" id="permissionsAvailableCount">0</span>
+                    </div>
+                    <div class="permission-drop" id="permissionsAvailable" data-target="available"></div>
+                </section>
+                <section class="permissions-column">
+                    <div class="permissions-column-head">
+                        <span class="permissions-column-title">Permitidas</span>
+                        <span class="permissions-count" id="permissionsAllowedCount">0</span>
+                    </div>
+                    <div class="permission-drop" id="permissionsAllowed" data-target="allowed"></div>
+                </section>
+            </div>
+            <div class="staff-row">
+                <div>
+                    <strong>Acceso Staff</strong>
+                    <small>Permite entrar al panel tecnico de Django si tiene permisos internos.</small>
+                </div>
+                <label class="section-permission">
+                    <input type="checkbox" id="permissionsStaff">
+                    <span>Staff</span>
+                </label>
+            </div>
+            <div class="permissions-actions">
+                <button type="button" class="btn btn-secondary" onclick="cerrarPermisosModal()">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="guardarPermisosModal()">Guardar secciones</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Uso del Bot -->
+<div class="modal-overlay" id="usageModal">
+    <div class="modal usage-modal">
+        <div class="usage-modal-head">
+            <div>
+                <h2 class="modal-title" id="usageModalTitle">Uso del bot</h2>
+                <p class="usage-modal-subtitle" id="usageModalSubtitle"></p>
+            </div>
+            <button type="button" class="usage-modal-close" onclick="cerrarUsoModal()" aria-label="Cerrar">x</button>
+        </div>
+        <div id="usageModalContent"></div>
+    </div>
+</div>
+
+{{ usuarios_uso|json_script:"usuarios-uso-data" }}
+{{ secciones_disponibles|json_script:"secciones-disponibles-data" }}
+
 <script>
+const USUARIOS_USO = JSON.parse(document.getElementById('usuarios-uso-data').textContent || '{}');
+const SECCIONES_DISPONIBLES = JSON.parse(document.getElementById('secciones-disponibles-data').textContent || '[]');
+let permisosEditando = null;
+let permisoArrastrado = '';
+const PERMISSION_COLORS = {
+    chat: '#60a5fa',
+    tareas: '#f59e0b',
+    citas: '#22c55e',
+    whatsapp: '#14b8a6',
+    facebook: '#3b82f6',
+    voz: '#a78bfa',
+    configurar: '#f472b6',
+    usuarios: '#f97316',
+};
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char]));
+}
+
 function openModal() {
     document.getElementById('newUserModal').classList.add('active');
 }
@@ -500,9 +1468,376 @@ function closePasswordModal() {
     document.getElementById('passwordModal').classList.remove('active');
 }
 
+function etiquetaSeccion(codigo) {
+    const encontrada = SECCIONES_DISPONIBLES.find(item => item[0] === codigo);
+    return encontrada ? encontrada[1] : codigo;
+}
+
+function seccionesPermitidasActuales() {
+    return new Set(permisosEditando?.secciones || []);
+}
+
+function moverPermiso(codigo, destino) {
+    if (!permisosEditando) return;
+    const secciones = seccionesPermitidasActuales();
+    if (destino === 'allowed') {
+        secciones.add(codigo);
+    } else {
+        secciones.delete(codigo);
+    }
+    permisosEditando.secciones = Array.from(secciones);
+    renderPermisosModal();
+}
+
+function permisoItem(codigo, destino) {
+    const accion = destino === 'allowed' ? 'available' : 'allowed';
+    const simbolo = destino === 'allowed' ? '-' : '+';
+    const color = PERMISSION_COLORS[codigo] || '#60a5fa';
+    return `
+        <div class="permission-pill" draggable="true" data-section="${escapeHtml(codigo)}" style="--permission-color:${escapeHtml(color)};">
+            <span class="permission-pill-main">
+                <span class="permission-dot"></span>
+                <span>${escapeHtml(etiquetaSeccion(codigo))}</span>
+            </span>
+            <button type="button" onclick="moverPermiso('${escapeHtml(codigo)}', '${accion}')" aria-label="Mover ${escapeHtml(etiquetaSeccion(codigo))}">${simbolo}</button>
+        </div>
+    `;
+}
+
+function enlazarDragPermisos() {
+    document.querySelectorAll('.permission-pill').forEach(item => {
+        item.addEventListener('dragstart', event => {
+            permisoArrastrado = item.dataset.section || '';
+            event.dataTransfer.setData('text/plain', permisoArrastrado);
+        });
+    });
+
+    document.querySelectorAll('.permission-drop').forEach(zona => {
+        zona.addEventListener('dragover', event => {
+            event.preventDefault();
+            zona.classList.add('drag-over');
+        });
+        zona.addEventListener('dragleave', () => zona.classList.remove('drag-over'));
+        zona.addEventListener('drop', event => {
+            event.preventDefault();
+            zona.classList.remove('drag-over');
+            const codigo = event.dataTransfer.getData('text/plain') || permisoArrastrado;
+            if (codigo) moverPermiso(codigo, zona.dataset.target);
+        });
+    });
+}
+
+function renderPermisosModal() {
+    if (!permisosEditando) return;
+    const permitidas = seccionesPermitidasActuales();
+    const disponibles = SECCIONES_DISPONIBLES.map(item => item[0]).filter(codigo => !permitidas.has(codigo));
+    const permitidasOrdenadas = SECCIONES_DISPONIBLES.map(item => item[0]).filter(codigo => permitidas.has(codigo));
+    const disponiblesHtml = disponibles.map(codigo => permisoItem(codigo, 'available')).join('');
+    const permitidasHtml = permitidasOrdenadas.map(codigo => permisoItem(codigo, 'allowed')).join('');
+
+    document.getElementById('permissionsAvailable').innerHTML = disponiblesHtml || '<div class="permission-empty">Sin secciones disponibles</div>';
+    document.getElementById('permissionsAllowed').innerHTML = permitidasHtml || '<div class="permission-empty">Arrastra secciones aquí</div>';
+    document.getElementById('permissionsAvailableCount').textContent = disponibles.length;
+    document.getElementById('permissionsAllowedCount').textContent = permitidasOrdenadas.length;
+    document.getElementById('permissionsStaff').checked = Boolean(permisosEditando.isStaff);
+    enlazarDragPermisos();
+}
+
+function abrirPermisosModal(userId) {
+    const uso = USUARIOS_USO[String(userId)];
+    if (!uso) return;
+
+    permisosEditando = {
+        userId,
+        username: uso.username,
+        empresa: uso.empresa || 'Sin empresa',
+        secciones: Array.isArray(uso.secciones_permitidas) ? [...uso.secciones_permitidas] : [],
+        isStaff: Boolean(uso.is_staff),
+    };
+
+    document.getElementById('permissionsAvatar').textContent = String(uso.username || 'US').slice(0, 2).toUpperCase();
+    document.getElementById('permissionsModalTitle').textContent = uso.username;
+    document.getElementById('permissionsModalSubtitle').textContent = permisosEditando.empresa;
+    renderPermisosModal();
+    document.getElementById('permissionsModal').classList.add('active');
+}
+
+function cerrarPermisosModal() {
+    document.getElementById('permissionsModal').classList.remove('active');
+    permisosEditando = null;
+}
+
+function guardarPermisosModal() {
+    if (!permisosEditando) return;
+
+    const userId = permisosEditando.userId;
+    const form = document.getElementById('form-' + userId);
+    form.querySelectorAll('input[data-dynamic="1"]').forEach(input => input.remove());
+
+    const camposBase = document.querySelectorAll(`[data-user-id="${userId}"][data-user-field]`);
+    camposBase.forEach(input => {
+        if (input.type === 'checkbox' && !input.checked) return;
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = input.dataset.userField;
+        hidden.value = input.type === 'checkbox' && input.dataset.userField === 'is_staff' ? 'on' : input.value;
+        hidden.dataset.dynamic = '1';
+        form.appendChild(hidden);
+    });
+
+    const seccionesEnviadas = document.createElement('input');
+    seccionesEnviadas.type = 'hidden';
+    seccionesEnviadas.name = 'secciones_enviadas';
+    seccionesEnviadas.value = '1';
+    seccionesEnviadas.dataset.dynamic = '1';
+    form.appendChild(seccionesEnviadas);
+
+    permisosEditando.secciones.forEach(codigo => {
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'secciones';
+        hidden.value = codigo;
+        hidden.dataset.dynamic = '1';
+        form.appendChild(hidden);
+    });
+
+    if (document.getElementById('permissionsStaff').checked) {
+        const staff = document.createElement('input');
+        staff.type = 'hidden';
+        staff.name = 'is_staff';
+        staff.value = 'on';
+        staff.dataset.dynamic = '1';
+        form.appendChild(staff);
+    }
+
+    form.submit();
+}
+
+function detalleCard(valor, etiqueta) {
+    return `
+        <div class="usage-detail-card">
+            <div class="usage-detail-value">${escapeHtml(valor)}</div>
+            <div class="usage-detail-label">${escapeHtml(etiqueta)}</div>
+        </div>
+    `;
+}
+
+function tablaDetalle(headers, rows) {
+    return `
+        <table class="usage-detail-table">
+            <thead>
+                <tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+                ${rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function pathMontana(puntos) {
+    if (!puntos.length) return '';
+
+    const partes = [`M ${puntos[0].x} ${puntos[0].y}`];
+    for (let idx = 1; idx < puntos.length; idx += 1) {
+        const previo = puntos[idx - 1];
+        const actual = puntos[idx];
+        const medioX = ((previo.x + actual.x) / 2).toFixed(2);
+        const medioY = ((previo.y + actual.y) / 2).toFixed(2);
+        partes.push(`Q ${previo.x} ${previo.y} ${medioX} ${medioY}`);
+        partes.push(`T ${actual.x} ${actual.y}`);
+    }
+    return partes.join(' ');
+}
+
+function graficaMontana(dias) {
+    const datos = Array.isArray(dias) ? dias : [];
+    const ancho = 820;
+    const alto = 300;
+    const margen = { top: 24, right: 26, bottom: 44, left: 42 };
+    const baseY = alto - margen.bottom;
+    const plotW = ancho - margen.left - margen.right;
+    const plotH = baseY - margen.top;
+    const entrantes = datos.map(dia => Number(dia.entrantes || 0));
+    const salientes = datos.map(dia => Number(dia.salientes || 0));
+    const totalEntrantes = entrantes.reduce((sum, valor) => sum + valor, 0);
+    const totalSalientes = salientes.reduce((sum, valor) => sum + valor, 0);
+    const total = totalEntrantes + totalSalientes;
+    const maximo = Math.max(...entrantes, ...salientes, 1);
+    const paso = datos.length > 1 ? plotW / (datos.length - 1) : plotW;
+
+    const puntos = valores => valores.map((valor, idx) => ({
+        x: Number((margen.left + (idx * paso)).toFixed(2)),
+        y: Number((baseY - ((valor / maximo) * plotH)).toFixed(2)),
+        valor,
+        fecha: datos[idx]?.fecha || '',
+    }));
+
+    const puntosEntrantes = puntos(entrantes);
+    const puntosSalientes = puntos(salientes);
+    const lineaEntrantes = pathMontana(puntosEntrantes);
+    const lineaSalientes = pathMontana(puntosSalientes);
+    const ultimoEntrante = puntosEntrantes[puntosEntrantes.length - 1];
+    const ultimoSaliente = puntosSalientes[puntosSalientes.length - 1];
+    const areaEntrantes = lineaEntrantes ? `${lineaEntrantes} L ${ultimoEntrante.x} ${baseY} L ${puntosEntrantes[0].x} ${baseY} Z` : '';
+    const areaSalientes = lineaSalientes ? `${lineaSalientes} L ${ultimoSaliente.x} ${baseY} L ${puntosSalientes[0].x} ${baseY} Z` : '';
+    const grid = [margen.top, margen.top + plotH / 2, baseY]
+        .map(y => `<line class="mountain-grid" x1="${margen.left}" y1="${y}" x2="${ancho - margen.right}" y2="${y}"></line>`)
+        .join('');
+    const etiquetas = datos.map((dia, idx) => {
+        const x = Number((margen.left + (idx * paso)).toFixed(2));
+        return `<text class="mountain-axis-label" x="${x}" y="${alto - 16}" text-anchor="middle">${escapeHtml(dia.fecha)}</text>`;
+    }).join('');
+    const dotsEntrantes = puntosEntrantes.map(punto => `
+        <circle class="mountain-dot-in" cx="${punto.x}" cy="${punto.y}" r="4">
+            <title>${escapeHtml(punto.fecha)}: ${escapeHtml(punto.valor)} entrantes</title>
+        </circle>
+    `).join('');
+    const dotsSalientes = puntosSalientes.map(punto => `
+        <circle class="mountain-dot-out" cx="${punto.x}" cy="${punto.y}" r="4">
+            <title>${escapeHtml(punto.fecha)}: ${escapeHtml(punto.valor)} salientes</title>
+        </circle>
+    `).join('');
+    const resumenDias = datos.map(dia => `
+        <div class="usage-mountain-day">
+            <div class="usage-mountain-date">${escapeHtml(dia.fecha)}</div>
+            <div class="usage-mountain-counts">
+                <span style="color:#93c5fd;">${escapeHtml(dia.entrantes)}</span>
+                <span style="color:#2dd4bf;">${escapeHtml(dia.salientes)}</span>
+                <span>${escapeHtml(dia.total)}</span>
+            </div>
+        </div>
+    `).join('');
+
+    return `
+        <div class="usage-mountain">
+            <div class="usage-mountain-head">
+                <div>
+                    <div class="usage-mountain-title">Actividad de los últimos 7 días</div>
+                    <div class="usage-mountain-total">${escapeHtml(total)} mensajes · ${escapeHtml(totalEntrantes)} entrantes · ${escapeHtml(totalSalientes)} salientes</div>
+                </div>
+                <div class="usage-mountain-legend">
+                    <span class="usage-mountain-key"><span class="usage-mountain-swatch" style="--swatch:#60a5fa;"></span>Entrantes</span>
+                    <span class="usage-mountain-key"><span class="usage-mountain-swatch" style="--swatch:#2dd4bf;"></span>Salientes</span>
+                    <span class="usage-mountain-key">Total por día</span>
+                </div>
+            </div>
+            <svg class="usage-mountain-svg" viewBox="0 0 ${ancho} ${alto}" role="img" aria-label="Gráfica de montaña de actividad de los últimos 7 días" preserveAspectRatio="none">
+                ${grid}
+                <text class="mountain-axis-label" x="12" y="${margen.top + 4}">${escapeHtml(maximo)}</text>
+                <text class="mountain-axis-label" x="18" y="${baseY + 4}">0</text>
+                ${total ? `
+                    <path class="mountain-area-in" d="${areaEntrantes}"></path>
+                    <path class="mountain-area-out" d="${areaSalientes}"></path>
+                    <path class="mountain-line-in" d="${lineaEntrantes}"></path>
+                    <path class="mountain-line-out" d="${lineaSalientes}"></path>
+                    ${dotsEntrantes}
+                    ${dotsSalientes}
+                ` : `<text class="mountain-empty" x="${ancho / 2}" y="${alto / 2}" text-anchor="middle">Sin actividad en este periodo</text>`}
+                ${etiquetas}
+            </svg>
+            <div class="usage-mountain-days">${resumenDias}</div>
+        </div>
+    `;
+}
+
+function abrirUsoModal(userId) {
+    const uso = USUARIOS_USO[String(userId)];
+    if (!uso) return;
+
+    document.getElementById('usageModalTitle').textContent = `Uso del bot - ${uso.username}`;
+    document.getElementById('usageModalSubtitle').textContent = `${uso.empresa || 'Sin empresa'} · ${uso.email || 'Sin correo'} · Última actividad: ${uso.ultima_actividad}`;
+
+    const resumen = [
+        detalleCard(uso.total, 'Mensajes totales'),
+        detalleCard(uso.entrantes_total, 'Entrantes'),
+        detalleCard(uso.salientes_total, 'Salientes'),
+        detalleCard(uso.dominante, 'Canal dominante'),
+        detalleCard(uso.conversaciones, 'Conversaciones'),
+        detalleCard(uso.contactos, 'Contactos'),
+        detalleCard(uso.citas, 'Citas'),
+        detalleCard(uso.tareas, 'Tareas'),
+    ].join('');
+
+    const canales = tablaDetalle(
+        ['Canal', 'Uso'],
+        [
+            ['WhatsApp', uso.whatsapp],
+            ['Web', uso.web],
+            ['Escritorio', uso.desktop],
+            ['Facebook', uso.facebook],
+        ]
+    );
+
+    const mensajes = tablaDetalle(
+        ['Tipo', 'Total'],
+        [
+            ['Texto', uso.texto],
+            ['Voz', uso.voz],
+            ['Imagen', uso.imagen],
+        ]
+    );
+
+    const citas = tablaDetalle(
+        ['Estado de citas', 'Total'],
+        [
+            ['Pendientes', uso.citas_pendientes],
+            ['Confirmadas', uso.citas_confirmadas],
+            ['Completadas', uso.citas_completadas],
+            ['Canceladas', uso.citas_canceladas],
+        ]
+    );
+
+    const tareas = tablaDetalle(
+        ['Estado de tareas', 'Total'],
+        [
+            ['Pendientes', uso.tareas_pendientes],
+            ['Completadas', uso.tareas_completadas],
+            ['Fallidas', uso.tareas_fallidas],
+            ['Canceladas', uso.tareas_canceladas],
+        ]
+    );
+
+    const dias = graficaMontana(uso.dias);
+
+    document.getElementById('usageModalContent').innerHTML = `
+        <div class="usage-detail-grid">${resumen}</div>
+        ${dias}
+        <div class="usage-section-title">Canales</div>
+        ${canales}
+        <div class="usage-section-title">Mensajes por tipo</div>
+        ${mensajes}
+        <div class="usage-section-title">Citas</div>
+        ${citas}
+        <div class="usage-section-title">Tareas programadas</div>
+        ${tareas}
+    `;
+
+    document.getElementById('usageModal').classList.add('active');
+}
+
+function cerrarUsoModal() {
+    document.getElementById('usageModal').classList.remove('active');
+}
+
 function saveUser(userId) {
     const form = document.getElementById('form-' + userId);
-    form.querySelector('input[name="accion"]').value = 'actualizar';
+    form.querySelectorAll('input[data-dynamic="1"]').forEach(input => input.remove());
+    document.querySelectorAll(`[data-user-id="${userId}"][data-user-field]`).forEach(input => {
+        if (input.type === 'checkbox' && !input.checked) return;
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = input.dataset.userField;
+        hidden.value = input.type === 'checkbox' && input.dataset.userField === 'is_staff' ? 'on' : input.value;
+        hidden.dataset.dynamic = '1';
+        form.appendChild(hidden);
+    });
+    const modelosEnviados = document.createElement('input');
+    modelosEnviados.type = 'hidden';
+    modelosEnviados.name = 'modelos_enviados';
+    modelosEnviados.value = '1';
+    modelosEnviados.dataset.dynamic = '1';
+    form.appendChild(modelosEnviados);
     form.submit();
 }
 
@@ -512,6 +1847,12 @@ document.getElementById('newUserModal').addEventListener('click', function(e) {
 });
 document.getElementById('passwordModal').addEventListener('click', function(e) {
     if (e.target === this) closePasswordModal();
+});
+document.getElementById('permissionsModal').addEventListener('click', function(e) {
+    if (e.target === this) cerrarPermisosModal();
+});
+document.getElementById('usageModal').addEventListener('click', function(e) {
+    if (e.target === this) cerrarUsoModal();
 });
 </script>
 {% endblock %}

@@ -16,21 +16,205 @@ import time
 from xml.etree import ElementTree
 from html.parser import HTMLParser
 from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 from gtts import gTTS
 from deepgram import DeepgramClient, DeepgramClientOptions, SpeakOptions
 from piper import PiperVoice
 import uuid
 import wave
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class GLMService:
+    CV_CONTEXT_FULL_MAX_CHARS = 9000
+    CV_CONTEXT_RELEVANT_MAX_CHARS = 6500
+
     def __init__(self):
         self.api_key = settings.ZAI_API_KEY
         self.base_url = settings.ZAI_BASE_URL
         self.model = settings.ZAI_MODEL
+        self.groq_api_key = getattr(settings, 'GROQ_API_KEY', None)
+        self.groq_model_normal = getattr(settings, 'GROQ_MODEL_NORMAL', 'llama-3.1-8b-instant')
 
-    def construir_prompt_sistema(self, perfil, canal='web', contacto=None):
+    def _limpiar_texto_cv(self, cv_texto):
+        """Limpia el texto del CV eliminando notas internas y metadatos.
+
+        Args:
+            cv_texto: Texto original del CV
+
+        Returns:
+            str: Texto limpio sin notas internas
+        """
+        if not cv_texto:
+            return ''
+
+        import re
+
+        texto = cv_texto
+
+        # Eliminar notas entre *(...)* o [...]
+        texto = re.sub(r'\*\([^)]*\)\*', '', texto)  # *(nota)*
+        texto = re.sub(r'\[[^\]]*\*(?:.|\n)*?\*\]', '', texto)  # [*(nota)*]
+        texto = re.sub(r'\[[^\]]*nota[^\]]*\]', '', texto, flags=re.IGNORECASE)  # [nota...]
+
+        # Eliminar líneas que contengan frases típicas de notas internas
+        patrones_notas = [
+            r'.*nota para ti.*',
+            r'.*en una situación real.*',
+            r'.*adjuntarías el.*',
+            r'.*esto es un ejemplo.*',
+            r'.*placeholder.*',
+            r'.*aquí iría.*',
+            r'.*aqui iría.*',
+            r'.*aquí iria.*',
+            r'.*[aA]quí.*[iI]ría.*',
+            r'.*\[Aquí.*',
+            r'.*\[Imagen.*',
+            r'.*\[PDF.*',
+            r'.*\[aAquí.*PDF.*\].*',
+            r'.*tarjeta de precios.*aquí.*',
+            r'.*TODO:.*',
+            r'.*FIXME:.*',
+            r'.*XXX:.*',
+            r'.*\[DEBUG\].*',
+            r'.*\[INFO\].*',
+        ]
+
+        for patron in patrones_notas:
+            texto = re.sub(patron, '', texto, flags=re.IGNORECASE | re.MULTILINE)
+
+        # Eliminar líneas que contengan emojis seguidos de texto entre corchetes (comunes en plantillas)
+        texto = re.sub(r'🖼️\s*\*?\[.*?\]\*?', '', texto)  # 🖼️ [texto]
+        texto = re.sub(r'📄\s*\*?\[.*?\]\*?', '', texto)  # 📄 [texto]
+        texto = re.sub(r'📋\s*\*?\[.*?\]\*?', '', texto)  # 📋 [texto]
+        texto = re.sub(r'[📊📈📉🖼️📎📄📋]\s*\*?\[.*?\]\*?', '', texto)  # Cualquier emoji de documento + [texto]
+
+        # Eliminar cualquier línea que sea solo un emoji seguido de corchetes
+        texto = re.sub(r'^\s*[^\w\s]\s*\[.*?\]\s*$', '', texto, flags=re.MULTILINE)
+
+        # Eliminar líneas vacías múltiples
+        texto = re.sub(r'\n\s*\n\s*\n+', '\n\n', texto)
+
+        # Limpiar espacios extra
+        texto = texto.strip()
+
+        return texto
+
+    def _terminos_busqueda(self, texto):
+        texto = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii").lower()
+        palabras = re.findall(r'[a-z0-9]{3,}', texto)
+        stopwords = {
+            'que', 'como', 'para', 'por', 'con', 'del', 'los', 'las', 'una', 'uno', 'este',
+            'esta', 'eso', 'esa', 'sobre', 'tiene', 'tengo', 'cual', 'cuales', 'cuando',
+            'donde', 'quien', 'puede', 'puedo', 'quiero', 'necesito', 'info', 'informacion',
+            'hola', 'buenas', 'gracias',
+        }
+        return [palabra for palabra in palabras if palabra not in stopwords]
+
+    def _dividir_contexto_cv(self, texto):
+        bloques = [bloque.strip() for bloque in re.split(r'\n\s*\n+', texto or '') if bloque.strip()]
+        chunks = []
+        actual = ''
+        for bloque in bloques:
+            if len(actual) + len(bloque) + 2 <= 1100:
+                actual = f"{actual}\n\n{bloque}".strip()
+            else:
+                if actual:
+                    chunks.append(actual)
+                if len(bloque) <= 1400:
+                    actual = bloque
+                else:
+                    for inicio in range(0, len(bloque), 1000):
+                        chunks.append(bloque[inicio:inicio + 1100].strip())
+                    actual = ''
+        if actual:
+            chunks.append(actual)
+        return chunks
+
+    def _contexto_cv_para_pregunta(self, perfil, consulta=''):
+        cv_limpio = self._limpiar_texto_cv(getattr(perfil, 'cv_texto', '') or '')
+        if not cv_limpio:
+            return 'Sin informacion adicional aun.'
+
+        if len(cv_limpio) <= self.CV_CONTEXT_FULL_MAX_CHARS:
+            return cv_limpio
+
+        terminos = self._terminos_busqueda(consulta)
+        chunks = self._dividir_contexto_cv(cv_limpio)
+        if not chunks or not terminos:
+            return cv_limpio[:self.CV_CONTEXT_FULL_MAX_CHARS].rsplit('\n', 1)[0].strip()
+
+        puntuados = []
+        for idx, chunk in enumerate(chunks):
+            normalizado = unicodedata.normalize("NFKD", chunk).encode("ascii", "ignore").decode("ascii").lower()
+            score = 0
+            for termino in terminos:
+                apariciones = normalizado.count(termino)
+                if apariciones:
+                    score += apariciones * (3 if len(termino) >= 6 else 1)
+            if score:
+                puntuados.append((score, idx, chunk))
+
+        if not puntuados:
+            return cv_limpio[:self.CV_CONTEXT_FULL_MAX_CHARS].rsplit('\n', 1)[0].strip()
+
+        seleccionados = []
+        total = 0
+        for _score, idx, chunk in sorted(puntuados, key=lambda item: (-item[0], item[1])):
+            if total + len(chunk) > self.CV_CONTEXT_RELEVANT_MAX_CHARS and seleccionados:
+                continue
+            seleccionados.append((idx, chunk))
+            total += len(chunk)
+            if total >= self.CV_CONTEXT_RELEVANT_MAX_CHARS:
+                break
+
+        fragmentos = "\n\n---\n\n".join(chunk for _idx, chunk in sorted(seleccionados, key=lambda item: item[0]))
+        return (
+            "Fragmentos mas relevantes del PDF/CV para la pregunta actual:\n"
+            f"{fragmentos}\n\n"
+            "Si la respuesta esta en estos fragmentos, usalos con prioridad. "
+            "Si falta un dato puntual, revisa tambien el resto del contexto cargado en el PDF/CV."
+        )
+
+    def _momento_colombia(self):
+        ahora = timezone.localtime(timezone.now())
+        hora = ahora.hour
+        if 5 <= hora < 12:
+            momento = 'mañana'
+            saludo = 'Buenos dias'
+        elif 12 <= hora < 18:
+            momento = 'tarde'
+            saludo = 'Buenas tardes'
+        else:
+            momento = 'noche'
+            saludo = 'Buenas noches'
+
+        return (
+            f"Fecha y hora local de referencia: {ahora.strftime('%Y-%m-%d %H:%M')} "
+            f"({getattr(settings, 'TIME_ZONE', 'America/Bogota')}, {momento}). "
+            f"Si saludas, usa un saludo coherente como '{saludo}' y no mezcles mañana/tarde/noche."
+        )
+
+    def _reglas_conversacion_consultiva(self, sujeto='cliente'):
+        pronombre = 'cliente' if sujeto == 'cliente' else 'usuario'
+        return f"""
+ESTILO DE CONVERSACION:
+- Prioriza indagar antes que explicar: responde corto y haz una pregunta util para avanzar.
+- Evita parrafos largos, listas extensas y explicaciones innecesarias. Si el {pronombre} no pidio detalle, no des detalle.
+- Personaliza segun lo que el {pronombre} acaba de decir y segun el nicho detectado en el PDF/contexto; no uses respuestas genericas ni ejemplos de otro sector.
+- Si el PDF/contexto habla de un nicho especifico (gym, inmobiliaria, clinica, restaurante, colegio, comercio, servicios profesionales, etc.), adapta las preguntas a ese nicho.
+- Si el {pronombre} esta explorando una idea, pregunta primero por el objetivo o problema principal antes de mencionar productos o servicios.
+- Si detectas interes real en avanzar, ofrece opciones de contacto/agendamiento de forma natural: llamada telefonica, seguir por WhatsApp o reunion por Meet/virtual, segun encaje con el contexto.
+- No propongas agendar si el {pronombre} solo esta preguntando informacion; ofrece agenda solo cuando muestre interes claro, pida avanzar, cotizar, ver demo, recibir asesoria o hablar con alguien.
+- Maneja cierres formales, breves y variados. No repitas siempre la misma despedida; alterna frases como "Con gusto lo revisamos.", "Quedo atento para orientarte mejor.", "Sera un gusto ayudarte a aterrizarlo.", "Gracias por contarme un poco mas.".
+- Usa la hora local de Colombia para que el tono sea coherente: buenos dias en la mañana, buenas tardes en la tarde, buenas noches en la noche.
+- Si haces una pregunta, que sea una sola y concreta. Ejemplo: "¿Que proceso te gustaria mejorar primero?".
+- Si el {pronombre} necesita escoger canal para avanzar, pregunta algo como: "¿Prefieres que lo revisemos por llamada, WhatsApp o una reunion por Meet?".
+"""
+
+    def construir_prompt_sistema(self, perfil, canal='web', contacto=None, consulta=''):
         contacto = contacto or {}
+        contexto_temporal = self._momento_colombia()
         if canal in ('whatsapp', 'facebook'):
             nombre_contacto = contacto.get('nombre') or 'un contacto'
             numero_contacto = contacto.get('numero') or 'numero desconocido'
@@ -38,200 +222,148 @@ class GLMService:
             linea_numero = contacto.get('linea_numero') or 'numero de linea desconocido'
             canal_nombre = 'Facebook / Messenger' if canal == 'facebook' else 'WhatsApp'
             unidad = 'pagina' if canal == 'facebook' else 'linea'
-            return f"""Actuas como redactor invisible de {canal_nombre} para {perfil.nombre_usuario}.
+
+            contexto_cv = self._contexto_cv_para_pregunta(perfil, consulta)
+
+            # USAR EL PROMPT PERSONALIZADO DEL PERFIL SI EXISTE
+            if perfil.prompt_sistema and perfil.prompt_sistema.strip():
+                prompt_base = perfil.prompt_sistema.strip()
+            else:
+                # Prompt por defecto si no hay personalizado
+                prompt_base = f"""Actuas como redactor invisible de {canal_nombre} para {perfil.nombre_usuario}.
+
+Tu funcion principal es escribir exactamente como si fueras {perfil.nombre_usuario}, en primera persona, respondiendo en su nombre.
+- {perfil.nombre_asistente} es solo el nombre interno del sistema. Nunca digas que eres un asistente, una IA, un bot o un sistema.
+- No firmes como {perfil.nombre_asistente}. No saludes diciendo "soy {perfil.nombre_asistente}".
+- No trates al remitente como si fuera {perfil.nombre_usuario}; tratalo como un contacto externo.
+- Responde de forma natural, breve y humana, como una persona real."""
+
+            return f"""{prompt_base}
 
 Contexto del canal:
-- Este mensaje NO lo escribe {perfil.nombre_usuario}.
-- El mensaje viene de {nombre_contacto} ({numero_contacto}), una persona que tiene contacto con {perfil.nombre_usuario} o que le escribio por {canal_nombre}.
+- Este mensaje viene de {nombre_contacto} ({numero_contacto}) por {canal_nombre}.
 - Estas respondiendo desde la {unidad} "{linea}" ({linea_numero}).
-- Tu funcion principal es escribir exactamente como si fueras {perfil.nombre_usuario}, en primera persona, respondiendo en su nombre.
-- {perfil.nombre_asistente} es solo el nombre interno del sistema. Nunca digas que eres {perfil.nombre_asistente}, un asistente, una IA, un bot o un sistema.
-- No firmes como {perfil.nombre_asistente}. No saludes diciendo "soy {perfil.nombre_asistente}". No expliques que estas ayudando a contestar.
-- No trates al remitente como si fuera {perfil.nombre_usuario}; tratalo como un contacto externo.
-- No actues como asistente de desarrollo en {canal_nombre}, salvo que el propio {perfil.nombre_usuario} te haya configurado explicitamente para eso.
-- No ejecutes comandos, no abras aplicaciones, no diagnostiques el PC y no menciones comandos internos por {canal_nombre}.
-- Responde de forma natural, breve y humana, adecuada para una conversacion de {canal_nombre}, como una persona real.
-- Si el mensaje recibido es "[Audio]", no digas que no puedes escucharlo. Responde algo natural como {perfil.nombre_usuario}, por ejemplo: "Dame un momentico y lo escucho bien.".
-- Si el contacto pide informacion que no sabes, no inventes. Pide un dato adicional o responde de forma prudente.
-- Si el contacto pregunta algo personal o sensible, evita revelar informacion privada y responde de forma prudente en primera persona.
-- Si parece una urgencia, una compra, una cita, una deuda, un asunto medico/legal o algo que requiera decision real, responde con cautela y di que lo revisas o lo confirmas luego.
-- Mantén el tono y la forma de hablar de {perfil.nombre_usuario} usando la informacion disponible, sin sonar robotico.
+- SOLO puedes enviar TEXTO. NO puedes enviar imagenes, PDFs, archivos ni adjuntos.
+- {contexto_temporal}
+
+RESTRICCIONES IMPORTANTES:
+- Responde exactamente al mensaje del cliente, no cambies de tema.
+- Si el cliente saluda, agradece, hace una pregunta simple o comenta algo casual, responde natural y humano.
+- Usa la informacion del contexto (PDF/CV) abajo para datos concretos sobre {perfil.nombre_usuario}.
+- NO inventes datos concretos que no esten en el contexto.
+- Si el cliente pregunta por productos, servicios, precios, soluciones o tiene un problema de negocio, responde de forma consultiva:
+  primero reconoce lo que necesita, luego conecta solo con servicios/productos que aparezcan en el contexto, y cierra con una pregunta breve para entender mejor su negocio.
+- Si aun no sabes si una solucion encaja, investiga conversando: pregunta por su nicho, objetivo, proceso actual, problema principal, volumen aproximado o resultado esperado.
+- Si el cliente dice que tiene una idea, que no sabe que necesita o algo como "no se", "no tengo claro", "quiero mejorar pero no se como", NO menciones productos por nombre todavia.
+- En ese caso, primero valida la idea del cliente y pide que la explique en una frase: que quiere crear, para quien seria y que problema quiere resolver.
+- Solo despues de entender esa idea puedes sugerir 2 o 3 caminos concretos basados SOLO en los productos/servicios del contexto.
+- No menciones un producto especifico por nombre si el cliente no lo conoce o no ha dado suficientes datos para conectar su necesidad con ese producto; si lo mencionas, explica primero en palabras simples para que serviria.
+- Si el cliente solo menciona su tipo de negocio o nicho, por ejemplo "es para un almacen", "es para un restaurante", "es para una tienda", NO recomiendes productos todavia. Pregunta primero que proceso quiere mejorar: inventario, ventas, facturacion, pedidos, cobros, atencion al cliente u otro.
+- Antes de recomendar un producto por nombre necesitas al menos dos señales concretas: el nicho del cliente y el problema/objetivo que quiere resolver.
+- Ejemplo correcto si dice "Es para un almacen": "Perfecto, para un almacen podemos mirar varias opciones segun lo que quieras mejorar. ¿Lo principal hoy es inventario, ventas/facturacion, pedidos o control de clientes?"
+- Ejemplo incorrecto: "Necesitas NOVA..." o "Te sirve COBRAPPX..." sin que el cliente haya explicado su problema.
+- Haz maximo una pregunta clara por respuesta, salvo que el cliente pida una asesoria mas completa.
+- No presiones la venta; ayuda a aterrizar si tiene sentido ofrecer un servicio o si primero falta entender mejor la necesidad.
+- NO hables de cosas que no te pregunten
+- NO leas imagenes, NO analices archivos, NO hagas cosas que no te pidan
+- NO conviertas la conversacion en agendamiento a menos que el cliente pida agendar, una cita, una reunion o confirme un horario ya propuesto.
+- Responde breve, cálido y conversacional (normalmente 2 a 3 oraciones)
+- Si falta un dato puntual, NO digas literalmente "No tengo esa informacion".
+- Responde de forma natural: reconoce que ese dato no aparece claro y, si aplica, pide solo el dato concreto que falta.
+{self._reglas_conversacion_consultiva('cliente')}
 
 Informacion conocida sobre {perfil.nombre_usuario}:
-{perfil.cv_texto or 'Sin informacion adicional aun.'}
+{contexto_cv}
 """
 
-        return f"""Eres {perfil.nombre_asistente}, el asistente personal de desarrollo de {perfil.nombre_usuario}.
+        contexto_cv = self._contexto_cv_para_pregunta(perfil, consulta)
+
+        # USAR EL PROMPT PERSONALIZADO DEL PERFIL SI EXISTE
+        if perfil.prompt_sistema and perfil.prompt_sistema.strip():
+            prompt_base = perfil.prompt_sistema.strip()
+        else:
+            # Prompt por defecto si no hay personalizado
+            prompt_base = f"Eres {perfil.nombre_asistente}, el asistente personal de {perfil.nombre_usuario}."
+
+        return f"""{prompt_base}
+
+Contexto temporal:
+- {contexto_temporal}
+
+RESTRICCIONES IMPORTANTES:
+- Responde exactamente al mensaje del usuario, no cambies de tema.
+- Si el usuario saluda, agradece, hace una pregunta simple o comenta algo casual, responde natural y humano.
+- Usa la informacion del contexto abajo para datos concretos sobre {perfil.nombre_usuario}.
+- NO inventes datos concretos que no esten en el contexto.
+- Si el usuario pregunta por productos, servicios, precios, soluciones o tiene un problema de negocio, responde de forma consultiva:
+  primero reconoce lo que necesita, luego conecta solo con servicios/productos que aparezcan en el contexto, y cierra con una pregunta breve para entender mejor su negocio.
+- Si aun no sabes si una solucion encaja, investiga conversando: pregunta por su nicho, objetivo, proceso actual, problema principal, volumen aproximado o resultado esperado.
+- Si el usuario dice que tiene una idea, que no sabe que necesita o algo como "no se", "no tengo claro", "quiero mejorar pero no se como", NO menciones productos por nombre todavia.
+- En ese caso, primero valida la idea del usuario y pide que la explique en una frase: que quiere crear, para quien seria y que problema quiere resolver.
+- Solo despues de entender esa idea puedes sugerir 2 o 3 caminos concretos basados SOLO en los productos/servicios del contexto.
+- No menciones un producto especifico por nombre si el usuario no lo conoce o no ha dado suficientes datos para conectar su necesidad con ese producto; si lo mencionas, explica primero en palabras simples para que serviria.
+- Si el usuario solo menciona su tipo de negocio o nicho, por ejemplo "es para un almacen", "es para un restaurante", "es para una tienda", NO recomiendes productos todavia. Pregunta primero que proceso quiere mejorar: inventario, ventas, facturacion, pedidos, cobros, atencion al cliente u otro.
+- Antes de recomendar un producto por nombre necesitas al menos dos señales concretas: el nicho del usuario y el problema/objetivo que quiere resolver.
+- Ejemplo correcto si dice "Es para un almacen": "Perfecto, para un almacen podemos mirar varias opciones segun lo que quieras mejorar. ¿Lo principal hoy es inventario, ventas/facturacion, pedidos o control de clientes?"
+- Ejemplo incorrecto: "Necesitas NOVA..." o "Te sirve COBRAPPX..." sin que el usuario haya explicado su problema.
+- Haz maximo una pregunta clara por respuesta, salvo que el usuario pida una asesoria mas completa.
+- No presiones la venta; ayuda a aterrizar si tiene sentido ofrecer un servicio o si primero falta entender mejor la necesidad.
+- NO hables de cosas que no te pregunten
+- NO leas imagenes, NO analices archivos, NO hagas cosas que no te pidan
+- Responde breve, cálido y conversacional (normalmente 2 a 3 oraciones)
+- Si falta un dato puntual, NO digas literalmente "No tengo esa informacion".
+- Responde de forma natural: reconoce que ese dato no aparece claro y, si aplica, pide solo el dato concreto que falta.
+{self._reglas_conversacion_consultiva('usuario')}
 
 Información sobre {perfil.nombre_usuario}:
-{perfil.cv_texto or 'Sin información adicional aún.'}
-
-REGLA DE INTERNET:
-Usa [WEB:consulta] solo cuando la respuesta necesite información actual, verificable o específica que pueda cambiar.
-No consultes internet para saludos, conversación casual, preguntas personales simples, ayuda general, explicaciones básicas o conocimiento estable que ya sepas.
-
-SEPARACIÓN DE CAPACIDADES:
-- [WEB:consulta] es SOLO para obtener información y responder una pregunta. No abre navegador, no ejecuta terminal y no modifica el PC.
-- Los comandos de desarrollo/PC son SOLO para acciones explícitas que el usuario quiere que ejecutes.
-- Nunca uses comandos del PC o terminal para responder una pregunta informativa.
-- Nunca uses [PC:buscar] como sustituto de investigar. Si el usuario dice "busca información", "investiga", "averigua", "consulta" o pregunta algo actual, usa [WEB:consulta].
-- Usa [PC:buscar] únicamente si el usuario pide abrir una búsqueda visible en el navegador, por ejemplo: "abre Google y busca X" o "busca X en el navegador".
-
-ESTÁ OBLIGADO A BUSCAR EN INTERNET si:
-- No estás seguro de la respuesta
-- La pregunta requiera información actual (noticias, precios, versiones recientes, clima, documentación vigente)
-- Se trate de un error específico que no conozcas
-- La pregunta sea sobre compatibilidad, paquetes, librerías o tecnologías recientes
-- El usuario pida investigar, averiguar, buscar documentación o solucionar un error
-- La pregunta incluya palabras como "cómo instalar", "error", "solución", "versión actual", "última versión"
-- La respuesta depende de información que cambió después de tu entrenamiento
-- No tienes información específica sobre el tema en tu conocimiento
-
-NO BUSQUES EN INTERNET si el usuario:
-- Saluda o conversa: "hola", "buenos días", "cómo estás", "qué haces"
-- Pide ayuda general: "ayúdame", "explícame", "qué puedes hacer"
-- Pregunta algo estable y básico que puedes responder de memoria
-- Da las gracias, se despide o hace comentarios casuales
-
-Tu respuesta debe empezar con [WEB:consulta] solo cuando necesites información actual.
-
-Ejemplos de CUÁNDO DEBES BUSCAR (obligatorio):
-- "¿Cómo instalar Docker en Ubuntu 24.04?" → [WEB:instalar Docker Ubuntu 24.04 guía paso a paso]
-- "¿Cuál es la última versión de React?" → [WEB:última versión React actual 2025]
-- "Me sale error al hacer npm install" → [WEB:solución error npm install linux]
-- "¿Cómo se usa Django REST Framework?" → [WEB:Django REST Framework documentación oficial tutorial]
-- "¿Qué es el nuevo modelo de OpenAI?" → [WEB:nuevo modelo OpenAI 2025 características]
-- "¿Cómo configurar NGINX?" → [WEB:configurar NGINX servidor web guía]
-- "¿Qué es FastAPI?" → [WEB:FastAPI framework Python documentación]
-- "¿Cómo crear un componente en React?" → [WEB:crear componente React tutorial]
-
-Ejemplos de CUÁNDO NO DEBES BUSCAR:
-- "hola" → Responde el saludo de forma natural.
-- "cómo estás" → Responde cordialmente sin [WEB].
-- "qué puedes hacer" → Explica tus capacidades sin [WEB].
-- "gracias" → Responde de forma breve sin [WEB].
-- "qué es una variable" → Explícalo con conocimiento propio sin [WEB].
-
-Si no sabes algo que requiere datos actuales, no inventes: usa [WEB:consulta].
-
-CAPACIDADES DE DESARROLLO:
-Cuando el usuario solicite acciones de desarrollo o del PC de forma explícita, responde PRIMERO con el comando correspondiente entre corchetes, luego da una explicación breve.
-Si el usuario solo pregunta "cómo", "qué", "cuál", "por qué", "me explicas" o "ayúdame a entender", responde con explicación o usa [WEB:consulta], pero NO ejecutes comandos.
-
-COMANDOS DISPONIBLES:
-- Para abrir aplicaciones: [ABRIR:aplicación] o [ABRIR:aplicación:ruta]
-  Ejemplos: VS Code→[ABRIR:code], Firefox→[ABRIR:firefox], Chrome→[ABRIR:google-chrome]
-
-- Para crear proyectos: [CREAR:tipo:nombre]
-  Ejemplos: Django→[CREAR:django:nombre], React→[CREAR:react:nombre], FastAPI→[CREAR:fastapi:nombre]
-
-- Para Git: [GIT:acción:parámetros]
-  Ejemplos: [GIT:init], [GIT:clone:url], [GIT:status], [GIT:add:archivos], [GIT:commit:mensaje], [GIT:push], [GIT:pull]
-
-- Para Docker: [DOCKER:acción]
-  Ejemplos: [DOCKER:ps], [DOCKER:up], [DOCKER:down], [DOCKER:build]
-
-- Para archivos: [LEER:ruta], [ESCRIBIR:ruta:contenido], [LS:patrón]
-
-- Para sistema: [SYS]
-
-- Para investigar en internet: [WEB:consulta]
-  Ejemplos: [WEB:como instalar docker en ubuntu 24.04], [WEB:error npm create vite linux solucion]
-
-- Para ejecutar terminal cuando haga falta resolver una tarea de desarrollo: [CMD:comando]
-  Ejemplos: [CMD:pwd], [CMD:ls -la], [CMD:python manage.py check], [CMD:npm test]
-  Usa [CMD:...] para inspeccionar, probar, instalar dependencias, ejecutar tests, diagnosticar errores o aplicar comandos necesarios.
-  Para comandos largos usa [BG:/cmd comando].
-
-- Para acciones del PC: [PC:acción:parámetros]
-  Acciones disponibles: abrir_url, buscar, abrir_terminal, abrir_carpeta, cerrar_app, cerrar_navegador, bloquear, suspender, hibernar, apagar, reiniciar, diagnostico, errores.
-  Ejemplos: [PC:abrir_url:https://google.com], [PC:buscar:django rest framework], [PC:abrir_terminal], [PC:abrir_carpeta:~/Descargas], [PC:cerrar_navegador:firefox], [PC:bloquear], [PC:suspender], [PC:diagnostico], [PC:errores]
-
-- Para tareas largas o cuando el usuario pida que sigas trabajando en segundo plano: [BG:/comando]
-  Ejemplos: [BG:/pc diagnostico], [BG:/pc errores], [BG:/docker build], [BG:/crear react mi-app]
-
-- Para enviar un WhatsApp a varios teléfonos autorizados ahora mismo, aunque no estén guardados como contactos:
-  [WHATSAPP_MASIVO:linea=yo;numeros=573001234567,573009876543;mensaje=Texto exacto a enviar]
-  Úsalo si el usuario da la lista de números/teléfonos de WhatsApp y el texto exacto del mensaje.
-  Si el usuario da números colombianos de 10 dígitos, el backend les agrega 57 automáticamente.
-  No lo uses para listas compradas, spam o contactos sin autorización.
-
-- Para programar alarmas, recordatorios y tareas a una hora específica: [ALARMA:fecha_hora:tipo:datos]
-  Formato de fecha_hora: "YYYY-MM-DD HH:MM" o "HH:MM" (para hoy)
-  Tipos disponibles: whatsapp, recordatorio, url, sistema, comando
-
-  Ejemplos:
-  - Enviar WhatsApp a las 3pm: [ALARMA:15:00:whatsapp:{{"numero":"573001234567","mensaje":"Hola"}}]
-  - Recordatorio a las 5pm: [ALARMA:17:00:recordatorio:{{"mensaje":"Reunión"}}]
-  - Abrir URL mañana: [ALARMA:2025-05-14 09:00:url:{{"url":"https://google.com"}}]
-  - Bloquear PC en 30 min: [ALARMA:+30min:sistema:{{"accion":"bloquear"}}]
-  - Apagar PC a las 10pm: [ALARMA:22:00:sistema:{{"accion":"apagar"}}]
-
-  Atajos rápidos:
-  - "recuerdame a las X que Y" → [ALARMA:X:recordatorio:{{"mensaje":"Y"}}]
-  - "envia whatsapp a las X" → te preguntará número y mensaje
-  - "bloquea el pc a las X" → [ALARMA:X:sistema:{{"accion":"bloquear"}}]
-
-- Para listar alarmas activas: [ALARMAS:listar]
-- Para cancelar una alarma: [ALARMAS:cancelar:id]
-
-FRASES COMUNES Y SUS COMANDOS:
-- "abre vscode"/"abre visual studio code" → [ABRIR:code]
-- "abre chrome"/"abre el navegador" → [ABRIR:google-chrome]
-- "abre firefox" → [ABRIR:firefox]
-- "abre spotify" → [ABRIR:spotify]
-- "abre google.com"/"abre esta página" → [PC:abrir_url:https://google.com]
-- "abre Google y busca ..." → [PC:buscar:...]
-- "busca información sobre ..." → [WEB:...]
-- "abre la terminal" → [PC:abrir_terminal]
-- "abre descargas"/"abre una carpeta" → [PC:abrir_carpeta:ruta]
-- "cierra chrome/firefox/el navegador" → [PC:cerrar_navegador:chrome/firefox]
-- "bloquea el pc" → [PC:bloquear]
-- "suspende/apaga/reinicia el pc" → [PC:suspender]/[PC:apagar]/[PC:reiniciar]
-- "revisa errores del pc"/"diagnostica el pc" → [PC:errores] o [PC:diagnostico]
-- "haz un diagnóstico completo y me avisas" → [BG:/pc diagnostico]
-- "revisa errores en segundo plano" → [BG:/pc errores]
-- "trabaja en eso y luego me das el reporte" → [BG:/pc diagnostico] si se refiere al PC, o el comando de desarrollo equivalente
-- "crea un proyecto django/react/fastapi/etc" → [CREAR:tipo:nombre]
-- "revisa este proyecto"/"soluciona este error"/"ejecuta pruebas" → [CMD:comando necesario]
-- "instala dependencias"/"corre el servidor"/"haz migrate" → [CMD:comando necesario]
-- "inicia git"/"inicializa git" → [GIT:init]
-- "estado del git"/"git status" → [GIT:status]
-- "hacer commit"/"crea commit" → [GIT:commit:mensaje]
-- "sube cambios"/"push" → [GIT:push]
-- "levanta docker"/"docker up" → [DOCKER:up]
-
-FRASES COMUNES PARA ALARMAS Y RECORDATORIOS:
-- "recuérdame a las 5pm que tengo reunión" → [ALARMA:17:00:recordatorio:{{"mensaje":"tengo reunión"}}]
-- "envía un whatsapp a las 3pm" → te preguntará número y mensaje, luego [ALARMA:15:00:whatsapp:{{"numero":"...","mensaje":"..."}}]
-- "a las 6pm bloquea el pc" → [ALARMA:18:00:sistema:{{"accion":"bloquear"}}]
-- "dentro de 30 minutos recuérdame llamar a Juan" → [ALARMA:+30min:recordatorio:{{"mensaje":"llamar a Juan"}}]
-- "programa que se apague el pc a las 10pm" → [ALARMA:22:00:sistema:{{"accion":"apagar"}}]
-- "a las 9am abre google.com" → [ALARMA:09:00:url:{{"url":"https://google.com"}}]
-- "mis alarmas"/"qué alarmas tengo" → [ALARMAS:listar]
-- "cancela la alarma X" → [ALARMAS:cancelar:X]
-
-Instrucciones de comportamiento:
-- Habla en español colombiano formal y elegante
-- Usa "con mucho gusto", "a sus órdenes", "claro que sí"
-- Cuando detectes una intención de acción de desarrollo, responde con el comando entre corchetes PRIMERO
-- Si el usuario pide una tarea larga, un reporte, análisis, instalación, compilación, pruebas, auditoría o dice "en segundo plano", usa [BG:/comando] en lugar del comando normal
-- Si el usuario pide investigar, averiguar cómo hacer algo, solucionar un error actual, buscar documentación o una guía actualizada, usa [WEB:consulta]
-- Para apagar, reiniciar, suspender, hibernar o cerrar aplicaciones/navegadores, avisa que puede requerir confirmación si el sistema lo solicita
-- Sé conciso y profesional
-- Si no es una acción de desarrollo, responde normalmente
-- Trata al usuario de "usted"
+{contexto_cv}
 """
+
 
     def chat(self, mensaje_usuario, perfil, historial=None, canal='web', contacto=None):
         historial = historial or []
-        sistema = self.construir_prompt_sistema(perfil, canal=canal, contacto=contacto)
+        contacto = contacto or {}
+        sistema = self.construir_prompt_sistema(perfil, canal=canal, contacto=contacto, consulta=mensaje_usuario)
 
         messages = []
         for h in historial[-10:]:
             messages.append({"role": h["rol"], "content": h["contenido"]})
         messages.append({"role": "user", "content": mensaje_usuario})
 
+        usar_groq_normal = self._resolver_flag_modelo(
+            perfil,
+            contacto,
+            'usar_groq_respuestas_normales',
+        )
+        usar_groq_complejo = self._resolver_flag_modelo(
+            perfil,
+            contacto,
+            'usar_groq_lexico_complejo',
+        )
+        requiere_modelo_complejo = self._requiere_modelo_complejo(mensaje_usuario, canal=canal)
+        forzar_groq_primero = bool(
+            isinstance(contacto, dict) and contacto.get('forzar_groq_primero')
+        )
+
+        if not usar_groq_normal and not usar_groq_complejo:
+            return ""
+
+        if usar_groq_normal and (forzar_groq_primero or not (usar_groq_complejo and requiere_modelo_complejo)):
+            respuesta_groq = self._chat_groq(sistema, messages, self.groq_model_normal)
+            if usar_groq_complejo and self._respuesta_debil(respuesta_groq, mensaje_usuario):
+                motivo = "audio entrante" if forzar_groq_primero else "switch de lexico complejo"
+                print(f"[GROQ] Respuesta debil; escalando a Z.AI por {motivo}")
+                respuesta_zai = self._chat_zai(sistema, messages)
+                return self._suavizar_si_no_sabe(respuesta_zai, canal)
+            return self._suavizar_si_no_sabe(respuesta_groq, canal)
+
+        if usar_groq_complejo and not requiere_modelo_complejo:
+            return ""
+
+        respuesta_zai = self._chat_zai(sistema, messages)
+        return self._suavizar_si_no_sabe(respuesta_zai, canal)
+
+    def _chat_zai(self, sistema, messages):
         headers = {
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
@@ -271,392 +403,104 @@ Instrucciones de comportamiento:
             print(f"[ZAI] Exception: {e}")
             return f"Lo siento, tuve un inconveniente técnico: {str(e)}"
 
-
-class ComandoService:
-    """Servicio para ejecutar comandos de terminal con opciones de seguridad"""
-
-    # Comandos básicos siempre permitidos
-    COMANDOS_BASICOS = [
-        "ls", "pwd", "echo", "date", "whoami",
-        "df", "free", "uptime", "ps", "cat",
-        "mkdir", "touch", "cp", "mv", "find", "cd",
-        "head", "tail", "grep", "wc", "sort", "uniq",
-        "chmod", "chown", "ln", "rm", "rmdir"
-    ]
-
-    # Comandos de desarrollo
-    COMANDOS_DESARROLLO = [
-        "python", "python3", "pip", "pip3", "poetry", "venv",
-        "node", "npm", "yarn", "pnpm", "npx",
-        "git", "docker", "docker-compose",
-        "code", "vi", "vim", "nano",
-        "curl", "wget", "ssh", "rsync",
-        "pytest", "unittest", "black", "flake8",
-        "eslint", "prettier", "tsc", "vite",
-        "django-admin", "manage.py", "flask",
-        "react-native", "next", "nuxt", "vue"
-    ]
-
-    # Comandos del sistema
-    COMANDOS_SISTEMA = [
-        "systemctl", "service", "journalctl",
-        "top", "htop", "kill", "killall",
-        "firefox", "google-chrome", "chromium",
-        "nautilus", "thunar", "xdg-open"
-    ]
-
-    def __init__(self, modo_desarrollador=False, comandos_extra=None):
-        self.modo_desarrollador = modo_desarrollador
-        self.comandos_extra = comandos_extra or []
-
-    def obtener_comandos_permitidos(self):
-        """Retorna la lista de comandos permitidos según el modo"""
-        if self.modo_desarrollador:
-            # En modo desarrollador, permitimos todo
-            return None  # None significa sin restricciones
-
-        comandos = self.COMANDOS_BASICOS.copy()
-        comandos.extend(self.COMANDOS_DESARROLLO)
-        comandos.extend(self.COMANDOS_SISTEMA)
-        comandos.extend(self.comandos_extra)
-        return comandos
-
-    def es_comando_seguro(self, comando):
-        """Verifica si un comando está permitido"""
-        comandos_permitidos = self.obtener_comandos_permitidos()
-
-        # Si retornamos None, no hay restricciones
-        if comandos_permitidos is None:
-            return True
-
-        cmd_base = comando.strip().split()[0]
-        return cmd_base in comandos_permitidos
-
-    def ejecutar(self, comando, timeout=30, working_dir=None):
-        """Ejecuta un comando y retorna el resultado"""
-        if not self.es_comando_seguro(comando):
-            return False, f"Comando '{comando.split()[0]}' no está permitido. Usa modo desarrollador para más acceso."
+    def _chat_groq(self, sistema, messages, model):
+        if not (self.groq_api_key or '').strip():
+            return "Lo siento, falta configurar GROQ_API_KEY en el archivo .env."
 
         try:
-            resultado = subprocess.run(
-                comando,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=working_dir
+            from groq import Groq
+        except ImportError:
+            return "Lo siento, falta instalar el paquete groq. Ejecuta: pip install groq"
+
+        try:
+            client = Groq(api_key=self.groq_api_key)
+            groq_messages = [{"role": "system", "content": sistema}]
+            groq_messages.extend(messages)
+            print(f"[GROQ] Model: {model}")
+            completion = client.chat.completions.create(
+                model=model,
+                messages=groq_messages,
+                temperature=0.4,
+                max_tokens=2048,
             )
-            salida = resultado.stdout or resultado.stderr
-            return True, salida.strip()
-        except subprocess.TimeoutExpired:
-            return False, f"El comando excedió el tiempo límite de {timeout} segundos."
+            return (completion.choices[0].message.content or '').strip()
         except Exception as e:
-            return False, str(e)
+            print(f"[GROQ] Exception: {e}")
+            return f"Lo siento, tuve un inconveniente técnico con Groq: {str(e)}"
 
+    def _resolver_flag_modelo(self, perfil, contacto, campo):
+        if isinstance(contacto, dict) and campo in contacto:
+            return bool(contacto.get(campo))
+        return bool(getattr(perfil, campo, False))
 
-class DeveloperTools:
-    """Herramientas para desarrollo de software"""
+    def _suavizar_si_no_sabe(self, respuesta, canal='web'):
+        texto = (respuesta or '').strip()
+        if not texto:
+            return texto
 
-    def __init__(self, working_dir=None):
-        self.working_dir = working_dir or os.getcwd()
-        self.cmd_service = ComandoService(modo_desarrollador=True)
-
-    # ─── PROYECTOS PYTHON ───────────────────────────────────────
-    def crear_django(self, nombre):
-        """Crea un nuevo proyecto Django"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"django-admin startproject {nombre}",
-            working_dir=self.working_dir
+        lower = texto.lower()
+        patrones_fuertes = (
+            r'^\s*no tengo (esa )?informaci[oó]n\.?\s*$',
+            r'^\s*no dispongo de (esa )?informaci[oó]n\.?\s*$',
+            r'^\s*no lo s[eé]\.?\s*$',
+            r'^\s*desconozco\.?\s*$',
         )
-        if exitoso:
-            return True, f"Proyecto Django '{nombre}' creado exitosamente en {self.working_dir}/{nombre}"
-        return False, f"Error creando proyecto Django: {resultado}"
+        if not any(re.search(patron, lower) for patron in patrones_fuertes):
+            return texto
 
-    def crear_fastapi(self, nombre):
-        """Crea un nuevo proyecto FastAPI"""
-        import os
-        project_dir = os.path.join(self.working_dir, nombre)
-        os.makedirs(project_dir, exist_ok=True)
+        if canal in ('whatsapp', 'facebook'):
+            return (
+                "Ese dato puntual no lo tengo fresco ahora mismo, "
+                "pero lo confirmo y te cuento en un momentico."
+            )
 
-        # Crear estructura básica
-        files = {
-            'main.py': '''from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI(title="'''+nombre+'''")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
-def read_root():
-    return {"message": "Hello World"}
-
-@app.get("/health")
-def health_check():
-    return {"status": "healthy"}
-''',
-            'requirements.txt': 'fastapi\nuvicorn[standard]\npydantic\npython-dotenv',
-            '.env': 'DEBUG=True\nSECRET_KEY=your-secret-key-here',
-            '.gitignore': '''__pycache__/
-*.py[cod]
-*$py.class
-.env
-.venv
-env/
-venv/
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-''',
-            'README.md': f'# {nombre}\n\nProyecto FastAPI\n\n## Instalación\n\n```bash\npip install -r requirements.txt\n```\n\n## Ejecutar\n\n```bash\nuvicorn main:app --reload\n```\n'
-        }
-
-        for filename, content in files.items():
-            filepath = os.path.join(project_dir, filename)
-            with open(filepath, 'w') as f:
-                f.write(content)
-
-        return True, f"Proyecto FastAPI '{nombre}' creado en {project_dir}"
-
-    def crear_flask(self, nombre):
-        """Crea un nuevo proyecto Flask"""
-        import os
-        project_dir = os.path.join(self.working_dir, nombre)
-        os.makedirs(project_dir, exist_ok=True)
-
-        files = {
-            'app.py': '''from flask import Flask, jsonify
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return jsonify({"message": "Hello from Flask!"})
-
-@app.route('/health')
-def health():
-    return jsonify({"status": "healthy"})
-
-if __name__ == '__main__':
-    app.run(debug=True)
-''',
-            'requirements.txt': 'Flask\ncors\npython-dotenv',
-            '.env': 'FLASK_APP=app.py\nFLASK_ENV=development',
-            '.gitignore': '__pycache__/\n*.pyc\n.env\nvenv/\n'
-        }
-
-        for filename, content in files.items():
-            with open(os.path.join(project_dir, filename), 'w') as f:
-                f.write(content)
-
-        return True, f"Proyecto Flask '{nombre}' creado en {project_dir}"
-
-    # ─── PROYECTOS FRONTEND ───────────────────────────────────────
-    def crear_react(self, nombre, typescript=False):
-        """Crea un nuevo proyecto React"""
-        template = "react-ts" if typescript else "react"
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"npm create vite@latest {nombre} -- --template {template}",
-            working_dir=self.working_dir,
-            timeout=60
+        return (
+            "Ese dato puntual no lo tengo fresco ahora mismo. "
+            "Lo reviso con calma y te ayudo a aterrizarlo bien."
         )
-        if exitoso:
-            return True, f"Proyecto React{' (TypeScript)' if typescript else ''} '{nombre}' creado. Ejecuta:\ncd {nombre} && npm install && npm run dev"
-        return False, f"Error creando proyecto React: {resultado}"
 
-    def crear_vue(self, nombre):
-        """Crea un nuevo proyecto Vue"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"npm create vue@latest {nombre} -- --typescript --router --pinia",
-            working_dir=self.working_dir,
-            timeout=60
+    def _requiere_modelo_complejo(self, mensaje_usuario, canal='web'):
+        texto = (mensaje_usuario or '').lower()
+        if len(texto) > 700:
+            return True
+        patrones = (
+            r'\b(explica|analiza|compara|argumenta|resume|redacta)\b.*\b(detallad|profund|tecnic|juridic|academ|formal)\b',
+            r'\b(lexico complejo|lenguaje complejo|terminos tecnicos|vocabulario tecnico)\b',
+            r'\b(api|sdk|arquitectura|algoritmo|framework|docker|kubernetes|django|python|javascript|typescript)\b',
+            r'\b(contrato|clausula|normativa|reglamento|diagnostico|estrategia|propuesta)\b',
         )
-        if exitoso:
-            return True, f"Proyecto Vue '{nombre}' creado. Ejecuta:\ncd {nombre} && npm install && npm run dev"
-        return False, f"Error creando proyecto Vue: {resultado}"
+        return any(re.search(patron, texto) for patron in patrones)
 
-    def crear_next(self, nombre):
-        """Crea un nuevo proyecto Next.js"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"npx create-next-app@latest {nombre} --typescript --tailwind --eslint --app --src-dir --import-alias '@/*' --yes",
-            working_dir=self.working_dir,
-            timeout=120
+    def _respuesta_debil(self, respuesta, mensaje_usuario):
+        texto = (respuesta or '').strip()
+        lower = texto.lower()
+        if not texto:
+            return True
+        if len(texto) < 90 and len((mensaje_usuario or '').strip()) > 120:
+            return True
+        patrones = (
+            r'\binconveniente t[eé]cnico\b',
+            r'\bfalta configurar\b',
+            r'\bfalta instalar\b',
+            r'\bno tengo (informacion|información|esa informacion|esa información|datos)\b',
+            r'\bno dispongo de (informacion|información|datos)\b',
+            r'\bno puedo responder\b',
+            r'\bno puedo confirmar\b',
+            r'\bno puedo asegurar\b',
+            r'\bno encuentro\b',
+            r'\bno aparece\b',
+            r'\bno estoy seguro\b',
+            r'\bno estoy 100% seguro\b',
+            r'\bno lo se\b',
+            r'\bno lo sé\b',
+            r'\bno se\b',
+            r'\bno sé\b',
+            r'\bdesconozco\b',
+            r'\brespuesta insuficiente\b',
+            r'\bfalta contexto\b',
         )
-        if exitoso:
-            return True, f"Proyecto Next.js '{nombre}' creado. Ejecuta:\ncd {nombre} && npm run dev"
-        return False, f"Error creando proyecto Next.js: {resultado}"
+        return any(re.search(patron, lower) for patron in patrones)
 
-    # ─── GIT ────────────────────────────────────────────────────
-    def git_init(self):
-        """Inicializa repositorio git"""
-        exitoso, resultado = self.cmd_service.ejecutar("git init", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_clone(self, url, nombre=None):
-        """Clona un repositorio"""
-        cmd = f"git clone {url}"
-        if nombre:
-            cmd += f" {nombre}"
-        exitoso, resultado = self.cmd_service.ejecutar(cmd, working_dir=self.working_dir, timeout=120)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_status(self):
-        """Muestra el estado de git"""
-        exitoso, resultado = self.cmd_service.ejecutar("git status", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_add(self, archivos="."):
-        """Agrega archivos al staging"""
-        exitoso, resultado = self.cmd_service.ejecutar(f"git add {archivos}", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_commit(self, mensaje):
-        """Crea un commit"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f'git commit -m "{mensaje}"',
-            working_dir=self.working_dir
-        )
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_push(self, remoto="origin", rama="main"):
-        """Hace push al repositorio remoto"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"git push {remoto} {rama}",
-            working_dir=self.working_dir,
-            timeout=60
-        )
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_pull(self):
-        """Hace pull del repositorio remoto"""
-        exitoso, resultado = self.cmd_service.ejecutar("git pull", working_dir=self.working_dir, timeout=60)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def git_branch(self, nombre=None, crear=False):
-        """Lista o crea ramas"""
-        if crear and nombre:
-            exitoso, resultado = self.cmd_service.ejecutar(f"git checkout -b {nombre}", working_dir=self.working_dir)
-        else:
-            exitoso, resultado = self.cmd_service.ejecutar("git branch", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    # ─── DOCKER ──────────────────────────────────────────────────
-    def docker_build(self, tag="latest"):
-        """Construye una imagen Docker"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"docker build -t {tag} .",
-            working_dir=self.working_dir,
-            timeout=300
-        )
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def docker_up(self, compose_file="docker-compose.yml"):
-        """Levanta servicios con docker-compose"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"docker-compose -f {compose_file} up -d",
-            working_dir=self.working_dir,
-            timeout=120
-        )
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def docker_down(self, compose_file="docker-compose.yml"):
-        """Detiene servicios con docker-compose"""
-        exitoso, resultado = self.cmd_service.ejecutar(
-            f"docker-compose -f {compose_file} down",
-            working_dir=self.working_dir,
-            timeout=60
-        )
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def docker_ps(self):
-        """Lista contenedores en ejecución"""
-        exitoso, resultado = self.cmd_service.ejecutar("docker ps", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    # ─── APLICACIONES ────────────────────────────────────────────
-    def abrir_vscode(self, ruta="."):
-        """Abre VS Code en la ruta especificada"""
-        exitoso, resultado = self.cmd_service.ejecutar(f"code {ruta}", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def abrir_navegador(self, url, navegador="firefox"):
-        """Abre una URL en el navegador"""
-        exitoso, resultado = self.cmd_service.ejecutar(f"{navegador} {url}", working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    def abrir_aplicacion(self, app):
-        """Abre una aplicación cualquiera"""
-        exitoso, resultado = self.cmd_service.ejecutar(app, working_dir=self.working_dir)
-        return exitoso, resultado if exitoso else f"Error: {resultado}"
-
-    # ─── UTILIDADES ──────────────────────────────────────────────
-    def leer_archivo(self, ruta):
-        """Lee el contenido de un archivo"""
-        try:
-            with open(ruta, 'r') as f:
-                return True, f.read()
-        except Exception as e:
-            return False, f"Error leyendo archivo: {str(e)}"
-
-    def escribir_archivo(self, ruta, contenido):
-        """Escribe contenido en un archivo"""
-        try:
-            with open(ruta, 'w') as f:
-                f.write(contenido)
-            return True, f"Archivo escrito en {ruta}"
-        except Exception as e:
-            return False, f"Error escribiendo archivo: {str(e)}"
-
-    def listar_archivos(self, ruta=".", patron="*"):
-        """Lista archivos en un directorio"""
-        import glob
-        try:
-            archivos = glob.glob(os.path.join(ruta, patron))
-            return True, "\n".join(archivos)
-        except Exception as e:
-            return False, f"Error listando archivos: {str(e)}"
-
-    def crear_directorio(self, ruta):
-        """Crea un directorio"""
-        try:
-            os.makedirs(ruta, exist_ok=True)
-            return True, f"Directorio creado: {ruta}"
-        except Exception as e:
-            return False, f"Error creando directorio: {str(e)}"
-
-    def obtener_info_sistema(self):
-        """Obtiene información del sistema"""
-        import platform
-        info = {
-            "sistema": platform.system(),
-            "release": platform.release(),
-            "version": platform.version(),
-            "arquitectura": platform.machine(),
-            "procesador": platform.processor(),
-            "python": platform.python_version(),
-            "directorio_actual": os.getcwd(),
-        }
-        return True, "\n".join([f"{k}: {v}" for k, v in info.items()])
 
 
 class _DuckDuckGoHTMLParser(HTMLParser):
@@ -1478,7 +1322,7 @@ class BackgroundTaskManager:
     def crear(cls, titulo, comando, target, *args, owner_id=None, **kwargs):
         cls._ensure_loaded()
         task_id = str(uuid.uuid4())
-        ahora = datetime.now().isoformat(timespec="seconds")
+        ahora = timezone.now().isoformat(timespec="seconds")
         task = {
             "id": task_id,
             "titulo": titulo,
@@ -1505,21 +1349,21 @@ class BackgroundTaskManager:
 
     @classmethod
     def _ejecutar(cls, task_id, target, args, kwargs):
-        cls._actualizar(task_id, estado="ejecutando", iniciado_en=datetime.now().isoformat(timespec="seconds"))
+        cls._actualizar(task_id, estado="ejecutando", iniciado_en=timezone.now().isoformat(timespec="seconds"))
         try:
             resultado = target(*args, **kwargs)
             cls._actualizar(
                 task_id,
                 estado="completada",
                 resultado=str(resultado or "Tarea completada sin salida."),
-                finalizado_en=datetime.now().isoformat(timespec="seconds"),
+                finalizado_en=timezone.now().isoformat(timespec="seconds"),
             )
         except Exception as exc:
             cls._actualizar(
                 task_id,
                 estado="error",
                 error=str(exc),
-                finalizado_en=datetime.now().isoformat(timespec="seconds"),
+                finalizado_en=timezone.now().isoformat(timespec="seconds"),
             )
 
     @classmethod
@@ -2110,7 +1954,7 @@ class SchedulerService:
 
         while self._running:
             try:
-                ahora = datetime.now()
+                ahora = timezone.now()
 
                 # Buscar tareas pendientes que deben ejecutarse ahora o antes
                 tareas = TareaProgramada.objects.filter(
@@ -2120,6 +1964,9 @@ class SchedulerService:
 
                 for tarea in tareas:
                     self._ejecutar_tarea(tarea)
+
+                # Revisar citas que necesitan recordatorio
+                self._revisar_recordatorios_citas()
 
             except Exception as e:
                 print(f"[SCHEDULER] Error en loop: {e}")
@@ -2149,13 +1996,6 @@ class SchedulerService:
             if tarea.tipo_accion == 'whatsapp':
                 resultado = self._enviar_whatsapp(tarea.parametros, tarea.perfil)
                 tarea.marcar_ejecutada(exitoso=resultado['exito'], resultado=resultado.get('mensaje'), error=resultado.get('error'))
-
-            elif tarea.tipo_accion == 'comando_pc':
-                from asistente.services import ComandoService
-                cmd_service = ComandoService(modo_desarrollador=True)
-                comando = tarea.parametros.get('comando', '')
-                exito, resultado = cmd_service.ejecutar(comando, timeout=60)
-                tarea.marcar_ejecutada(exitoso=exito, resultado=resultado)
 
             elif tarea.tipo_accion == 'url':
                 url = tarea.parametros.get('url', '')
@@ -2208,7 +2048,6 @@ class SchedulerService:
 
     def _enviar_whatsapp(self, parametros, perfil=None):
         """Envía un mensaje de WhatsApp a través del baileys-service."""
-        import requests
 
         numeros = parametros.get('numeros') or parametros.get('destinatarios')
         if numeros:
@@ -2227,10 +2066,8 @@ class SchedulerService:
             return {'exito': False, 'error': 'Número inválido'}
 
         try:
-            url_baileys = getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002'
-
-            response = requests.post(
-                f"{url_baileys}/send-message",
+            response, url_baileys = self._post_baileys(
+                'send-message',
                 json={
                     'numero': numero_limpio,
                     'mensaje': mensaje,
@@ -2242,10 +2079,28 @@ class SchedulerService:
             if response.status_code == 200:
                 return {'exito': True, 'mensaje': f'Mensaje enviado a {numero}'}
             else:
-                return {'exito': False, 'error': f'Error baileys: {response.text}'}
+                return {'exito': False, 'error': f'Error baileys ({url_baileys}): {response.text}'}
 
         except Exception as e:
             return {'exito': False, 'error': str(e)}
+
+    def _urls_baileys(self):
+        configurada = (getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002').rstrip('/')
+        urls = [configurada]
+        for fallback in ('http://localhost:3002', 'http://localhost:3003'):
+            if fallback not in urls and configurada.startswith('http://localhost:'):
+                urls.append(fallback)
+        return urls
+
+    def _post_baileys(self, endpoint, json, timeout=60):
+        errores = []
+        for url_baileys in self._urls_baileys():
+            try:
+                response = requests.post(f"{url_baileys}/{endpoint}", json=json, timeout=timeout)
+                return response, url_baileys
+            except requests.RequestException as exc:
+                errores.append(f"{url_baileys}: {exc}")
+        raise RuntimeError("No pude conectar con Baileys. Intentos: " + " | ".join(errores))
 
     def _limpiar_numero_whatsapp(self, numero):
         limpio = ''.join(c for c in str(numero or '') if c.isdigit())
@@ -2280,7 +2135,6 @@ class SchedulerService:
         linea = (parametros.get('linea') or 'principal').strip() or 'principal'
         linea_publica = (parametros.get('linea_publica') or linea).strip() or linea
         formato = (parametros.get('formato') or 'texto').strip().lower()
-        url_baileys = getattr(settings, 'BAILEYS_SERVICE_URL', None) or 'http://localhost:3002'
         numeros_raw = parametros.get('numeros') or []
         if isinstance(numeros_raw, str):
             numeros_raw = re.split(r'[\s,;]+', numeros_raw)
@@ -2359,7 +2213,7 @@ class SchedulerService:
                 else:
                     payload['mensaje'] = mensaje
 
-                response = requests.post(f"{url_baileys}/{endpoint}", json=payload, timeout=60)
+                response, url_usada = self._post_baileys(endpoint, json=payload, timeout=60)
                 if response.status_code == 200:
                     enviados.append(numero)
                     if perfil:
@@ -2376,7 +2230,7 @@ class SchedulerService:
                             respondido=True,
                         )
                 else:
-                    fallidos.append(f"{numero}: {response.text[:220]}")
+                    fallidos.append(f"{numero}: Error baileys ({url_usada}): {response.text[:220]}")
             except Exception as exc:
                 fallidos.append(f"{numero}: {exc}")
 
@@ -2448,6 +2302,45 @@ class SchedulerService:
             )
             print(f"[SCHEDULER] Siguiente instancia programada para {siguiente_hora}")
 
+    def _revisar_recordatorios_citas(self):
+        """Revisa y envía recordatorios de citas que están próximas."""
+        from asistente.models import Cita
+        from datetime import timedelta
+
+        ahora = timezone.now()
+        ventana = ahora + timedelta(minutes=5)
+
+        # Buscar citas que necesitan recordatorio
+        citas = Cita.objects.filter(
+            estado__in=['pendiente', 'confirmada'],
+            recordatorio_enviado=False,
+            fecha_hora__lte=ventana,
+        ).exclude(fecha_hora__lte=ahora)
+
+        for cita in citas:
+            try:
+                minutos_restantes = int((cita.fecha_hora - ahora).total_seconds() / 60)
+
+                # Enviar recordatorio si está dentro del tiempo configurado
+                if minutos_restantes <= cita.recordatorio_minutos_antes:
+                    print(f"[SCHEDULER] Enviando recordatorio para cita: {cita.titulo}")
+
+                    # Usar la tarea de recordatorio asociada si existe
+                    if cita.tarea_recordatorio and cita.tarea_recordatorio.estado == 'pendiente':
+                        self._ejecutar_tarea(cita.tarea_recordatorio)
+                    else:
+                        # Crear y enviar recordatorio al momento
+                        from .services import CitaService
+                        exito, mensaje = CitaService().enviar_recordatorio_cita(cita.id)
+                        if not exito:
+                            print(f"[SCHEDULER] Error enviando recordatorio: {mensaje}")
+
+                    cita.recordatorio_enviado = True
+                    cita.save()
+
+            except Exception as e:
+                print(f"[SCHEDULER] Error enviando recordatorio para cita {cita.id}: {e}")
+
     @staticmethod
     def crear_tarea(perfil, titulo, tipo_accion, parametros, programado_para, repetir=None):
         """Método estático para crear una nueva tarea programada."""
@@ -2496,3 +2389,941 @@ def obtener_scheduler():
         _scheduler_instance = SchedulerService()
         _scheduler_instance.iniciar()
     return _scheduler_instance
+
+
+class CitaService:
+    """Servicio para gestionar citas, detección de intención y recordatorios."""
+
+    def __init__(self):
+        self.glm_service = GLMService()
+
+    def _normalizar_fecha_hora(self, fecha_hora):
+        """Devuelve un datetime aware usando la zona horaria configurada."""
+        if fecha_hora and timezone.is_naive(fecha_hora):
+            return timezone.make_aware(fecha_hora)
+        return fecha_hora
+
+    def _rango_dia_local(self, fecha_hora):
+        """Devuelve el rango UTC/aware que cubre el dia local de fecha_hora."""
+        fecha_local = timezone.localtime(self._normalizar_fecha_hora(fecha_hora)).date()
+        inicio_local = datetime.combine(fecha_local, datetime.min.time())
+        inicio = self._normalizar_fecha_hora(inicio_local)
+        fin = inicio + timedelta(days=1)
+        return inicio, fin
+
+    def _normalizar_inicio_cita(self, fecha_hora):
+        fecha_hora = self._normalizar_fecha_hora(fecha_hora)
+        if not fecha_hora:
+            return fecha_hora
+        return fecha_hora.replace(second=0, microsecond=0)
+
+    def _formatear_fecha_cita(self, fecha_hora, formato="%d/%m %H:%M"):
+        return timezone.localtime(self._normalizar_fecha_hora(fecha_hora)).strftime(formato)
+
+    def _ajustar_hora_ambigua(self, datos, texto_contextual=''):
+        """Evita convertir horas ambiguas como "a las 5" en 05:00 por accidente."""
+        hora = datos.get("hora")
+        if not hora:
+            return datos
+
+        match = re.match(r'^\s*(\d{1,2}):(\d{2})\s*$', str(hora))
+        if not match:
+            return datos
+
+        hora_num = int(match.group(1))
+        minuto = int(match.group(2))
+        texto = (texto_contextual or '').lower()
+        menciona_tarde = bool(re.search(r'\b(pm|p\.m\.|tarde|noche)\b', texto))
+        menciona_manana = bool(re.search(
+            r'\b(am|a\.m\.|madrugada)\b|\b(de|por)\s+la\s+(mañana|manana)\b',
+            texto,
+        ))
+
+        if 1 <= hora_num <= 7 and menciona_tarde and not menciona_manana:
+            datos["hora"] = f"{hora_num + 12:02d}:{minuto:02d}"
+            return datos
+
+        if 1 <= hora_num <= 7 and not menciona_tarde and not menciona_manana:
+            datos["completo"] = False
+            datos["fecha_hora"] = None
+            datos["motivo_incompleto"] = "Hora ambigua: falta aclarar si es de la mañana o de la tarde."
+
+        return datos
+
+    # Patrones para detectar intención de agendamiento
+    PATRONES_AGENDAMIENTO = [
+        r'\b(quiero|quisiera|necesito|puedo|podemos|me puedes|me gustaria|me gustaría)\b.*\b(agendar|programar|reservar|cita|reuni(ón|on))\b',
+        r'\b(agendar|programar|reservar|sacar|marcar|fijar|concertar)\b.*\b(cita|reuni(ón|on)|llamada|meet|agenda)\b',
+        r'\b(cita|reuni(ón|on)|llamada|meet)\b.*\b(agendar|programar|reservar|coordinar|cuadrar|confirmar)\b',
+        r'\bconfirm(a|ar)\b.*\b(cita|reuni(ón|on)|llamada|meet|horario)\b',
+        r'\bquiero\b.*\bver(te)?me\b', r'\bhablemos\b.*\bel\b',
+        r'\bsacar\b.*\bcita\b', r'\bmarcar\b.*\bcita\b',
+        r'\bfij(ar|arme)\b.*\bcita\b', r'\bconcert(ar|arme)\b.*\bcita\b',
+        r'\b(podemos|podría|puedo)\s+(vernos|hablar|quedar|reunirnos)\b.*\b(lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo|mañana|hoy|hora|am|pm)\b',
+    ]
+
+    def detectar_intencion_agendamiento(self, mensaje, conversacion=None):
+        """Detecta si el mensaje expresa intención de agendar una cita.
+
+        Args:
+            mensaje: Texto del mensaje a analizar
+
+        Returns:
+            bool: True si se detecta intención de agendar
+        """
+        print(f"[CITA_SERVICE] 🔧🔧 detectar_intencion_agendamiento LLAMADO con mensaje: '{mensaje[:100] if mensaje else '(vacio)'}'")
+
+        if not mensaje:
+            print("[CITA_SERVICE] detectar_intencion_agendamiento: mensaje vacío")
+            return False
+
+        mensaje_lower = mensaje.lower()
+        contexto_conversacion = self._resumen_conversacion_para_cita(conversacion, limite=10)
+        texto_contextual = f"{contexto_conversacion}\nCliente: {mensaje}".strip()
+        texto_contextual_lower = texto_contextual.lower()
+        print(f"[CITA_SERVICE] 🔍 Analizando mensaje para intención de agendamiento: '{mensaje[:100]}...'")
+        print(f"[CITA_SERVICE] Longitud del mensaje: {len(mensaje)} caracteres")
+
+        hay_solicitud_explicita = self._mensaje_pide_agendar_explicitamente(mensaje_lower)
+        espera_dato_cita = self._conversacion_espera_dato_cita(conversacion)
+
+        # Primero verificar con patrones rápidos de regex, pero solo patrones de agenda claros.
+        for patron in self.PATRONES_AGENDAMIENTO:
+            if re.search(patron, mensaje_lower):
+                print(f"[CITA_SERVICE] ✅ Patrón detectado: {patron}")
+                return True
+
+        if espera_dato_cita and self._mensaje_es_fragmento_de_cita(mensaje_lower):
+            print("[CITA_SERVICE] ✅ Intención detectada por contexto conversacional reciente")
+            return True
+
+        # Si no detecta con regex, usar IA para analizar mejor el mensaje
+        # Solo si menciona día de la semana, hora, o palabras relacionadas
+        menciones_dias = any(dia in texto_contextual_lower for dia in ['lunes', 'martes', 'miércoles', 'miercoles', 'jueves', 'viernes', 'sábado', 'sabado', 'domingo', 'mañana', 'hoy'])
+        menciones_hora = any(patron in texto_contextual_lower for patron in ['am', 'pm', 'de la mañana', 'de la tarde', 'de la noche', ':']) or bool(re.search(r'\d{1,2}\s*:\s*\d{2}', texto_contextual))
+        menciones_agendar = any(palabra in texto_contextual_lower for palabra in ['agendar', 'cita', 'reunion', 'reunión', 'quedar', 'hablaremos', 'verse', 'versemos', 'meet'])
+
+        if hay_solicitud_explicita and (menciones_dias or menciones_hora):
+            print(f"[CITA_SERVICE] ✅ Detecta día + hora, usando IA para confirmar intención")
+            # Usar IA para confirmar si es una cita
+            return self._confirmar_intencion_con_ia(texto_contextual)
+
+        if hay_solicitud_explicita and menciones_agendar:
+            print(f"[CITA_SERVICE] ✅ Detecta conversación de cita con fragmento útil")
+            return self._confirmar_intencion_con_ia(texto_contextual)
+
+        print("[CITA_SERVICE] ❌ No se detectó ningún patrón de agendamiento")
+        return False
+
+    def _mensaje_pide_agendar_explicitamente(self, mensaje_lower):
+        patrones = (
+            r'\b(agendar|agenda|programar|reservar|sacar|marcar|fijar|concertar|coordinar|cuadrar)\b',
+            r'\b(cita|reuni(ón|on)|llamada|meet|google meet|zoom|teams)\b',
+            r'\b(vernos|reunirnos|hablemos|hablar)\b.*\b(lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo|mañana|hoy|hora|am|pm)\b',
+        )
+        return any(re.search(patron, mensaje_lower) for patron in patrones)
+
+    def _conversacion_espera_dato_cita(self, conversacion):
+        if not conversacion:
+            return False
+
+        ultimo = conversacion.mensajes.filter(origen='saliente').order_by('-creado_en').first()
+        if not ultimo:
+            return False
+
+        texto = (ultimo.contenido or '').lower()
+        patrones = (
+            r'\bpara agendar\b',
+            r'\bd[ií]a y la hora\b',
+            r'\bhora exacta\b',
+            r'\botro horario\b',
+            r'\bhorarios disponibles\b',
+            r'\bte gustar[ií]a agendar\b',
+            r'\bde la mañana o de la tarde\b',
+        )
+        return any(re.search(patron, texto) for patron in patrones)
+
+    def _mensaje_es_fragmento_de_cita(self, mensaje_lower):
+        fragmentos = (
+            r'\b(a que horas|a qué horas|que horas|qué horas|hora)\b',
+            r'\b(meet|google meet|zoom|teams|presencial|virtual)\b',
+            r'\b(metro|oficina|local|sede|direccion|dirección|ubicacion|ubicación)\b',
+            r'\b(listo|dale|va|ok|perfecto|confirmo|confirmado|si|sí)\b',
+            r'\b(no jajaj|mejor|entonces)\b',
+        )
+        return any(re.search(patron, mensaje_lower) for patron in fragmentos)
+
+    def _contexto_indica_agendamiento(self, texto_contextual_lower, mensaje_lower):
+        if not texto_contextual_lower:
+            return False
+
+        claves_cita = (
+            'agendar', 'agenda', 'cita', 'reunion', 'reunión', 'meet', 'google meet',
+            'vernos', 'vernos', 'hablemos', 'hablar', 'quedar', 'disponible',
+            'horario', 'hora exacta', 'día y la hora', 'dia y la hora',
+        )
+        hay_contexto_cita = any(clave in texto_contextual_lower for clave in claves_cita)
+        hay_fecha = any(dia in texto_contextual_lower for dia in (
+            'lunes', 'martes', 'miércoles', 'miercoles', 'jueves', 'viernes',
+            'sábado', 'sabado', 'domingo', 'mañana', 'pasado mañana', 'hoy',
+        ))
+        hay_hora = bool(re.search(
+            r'\b(?:a las?|tipo|sobre las?)\s+\d{1,2}\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm)\b',
+            texto_contextual_lower,
+        ))
+        fragmento_actual = self._mensaje_es_fragmento_de_cita(mensaje_lower)
+
+        return hay_contexto_cita and (hay_fecha or hay_hora or fragmento_actual)
+
+    def _confirmar_intencion_con_ia(self, mensaje):
+        """Usa IA para confirmar si el mensaje expresa intención de agendar.
+
+        Args:
+            mensaje: Texto del mensaje a analizar
+
+        Returns:
+            bool: True si la IA confirma que es intención de agendar
+        """
+        import json
+
+        prompt = f"""Analiza el siguiente mensaje y responde ÚNICAMENTE con JSON válido:
+
+Mensaje: "{mensaje}"
+
+Responde con este formato exacto (sin texto adicional):
+{{"es_cita": true/false}}
+
+Considera que es una cita si:
+- Menciona un día/hora específico para encontrarse
+- Propone una reunión, cita o quedada
+- Confirma un horario
+
+Responde con false si:
+- Es solo un saludo
+- Pregunta información general
+- No menciona día/hora para encontrarse
+"""
+
+        try:
+            messages = [
+                {"role": "system", "content": "Responde solo con JSON válido, sin texto adicional."},
+                {"role": "user", "content": prompt}
+            ]
+
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": self.glm_service.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+
+            payload = {
+                "model": self.glm_service.model,
+                "max_tokens": 100,
+                "messages": messages,
+            }
+
+            response = requests.post(
+                f"{self.glm_service.base_url}/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=10,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                texto = data["content"][0]["text"].strip()
+
+                # Limpiar markdown
+                if texto.startswith("```json"):
+                    texto = texto[7:]
+                if texto.startswith("```"):
+                    texto = texto[3:]
+                if texto.endswith("```"):
+                    texto = texto[:-3]
+
+                resultado = json.loads(texto.strip())
+                es_cita = resultado.get("es_cita", False)
+
+                print(f"[CITA_SERVICE] IA confirmó intención de cita: {es_cita}")
+                return es_cita
+
+        except Exception as e:
+            print(f"[CITA_SERVICE] Error confirmando intención con IA: {e}")
+
+        return False
+
+    def _resumen_conversacion_para_cita(self, conversacion, limite=8):
+        if not conversacion:
+            return ""
+
+        lineas = []
+        mensajes = conversacion.mensajes.order_by('-creado_en')[:limite]
+        for mensaje in reversed(list(mensajes)):
+            contenido = re.sub(r'\s+', ' ', mensaje.contenido or '').strip()
+            if not contenido or contenido == '[Audio]':
+                continue
+            rol = 'Cliente' if mensaje.origen == 'entrante' else 'Respuesta'
+            if len(contenido) > 180:
+                contenido = contenido[:177].rsplit(' ', 1)[0] + '...'
+            lineas.append(f"{rol}: {contenido}")
+
+        return "\n".join(lineas)
+
+    def extraer_datos_cita(self, mensaje, perfil, conversacion=None):
+        """Usa IA para extraer datos estructurados de la cita.
+
+        Args:
+            mensaje: Texto del mensaje
+            perfil: PerfilAsistente del usuario
+
+        Returns:
+            dict: Datos extraídos de la cita con claves:
+                - titulo: str
+                - fecha_hora: datetime
+                - duracion_minutos: int
+                - ubicacion: str | None
+                - descripcion: str | None
+                - completo: bool (si se pudo extraer fecha y hora)
+        """
+        from datetime import datetime, timedelta
+        import json
+
+        print(f"[CITA_SERVICE] extraer_datos_cita llamado con mensaje: '{mensaje[:100]}...'")
+
+        ahora = datetime.now()
+
+        # Calcular fecha de mañana para el ejemplo
+        manana = ahora + timedelta(days=1)
+
+        # Few-shot: ejemplo concreto
+        ejemplo_fecha = (ahora + timedelta(days=1)).strftime('%Y-%m-%d')
+
+        contexto_conversacion = self._resumen_conversacion_para_cita(conversacion)
+
+        prompt_extraccion = f"""Extrae los datos de una cita usando el ultimo mensaje y la conversación reciente.
+
+Ultimo mensaje del cliente: "{mensaje}"
+
+Hoy es: {ahora.strftime('%Y-%m-%d')} (mañana será {manana.strftime('%Y-%m-%d')})
+
+Conversacion reciente con el cliente:
+{contexto_conversacion or 'Sin historial reciente.'}
+
+Reglas:
+- Usa la conversación reciente para completar datos que el ultimo mensaje trae fragmentados.
+- Si el cliente corrige el lugar, conserva la corrección más reciente. Ejemplo: "No jajaj en el meet" significa ubicación virtual/Google Meet, no presencial.
+- Si el cliente dice "Metro" dentro de una conversación de cita, úsalo como ubicación si no hay una corrección posterior.
+- Si el cliente pregunta "A qué horas", no inventes una hora; marca "completo": false si no hay hora acordada.
+- Si el cliente confirma con "sí", "listo", "dale", "ok", "perfecto" o similar, usa la fecha/hora propuesta o acordada más reciente en la conversación.
+- "titulo" debe describir el tipo de encuentro en pocas palabras.
+- "descripcion" debe explicar de que se tratara la reunion segun lo conversado con el cliente, no solo repetir la hora.
+- Si no hay tema claro, usa una descripcion breve basada en el ultimo mensaje del cliente.
+- Mantén "descripcion" en maximo 180 caracteres.
+
+EJEMPLO:
+Mensaje: "mañana a las 11"
+Respuesta: {{"titulo": "Cita", "fecha": "{ejemplo_fecha}", "hora": "11:00", "duracion_minutos": 60, "ubicacion": null, "descripcion": "Reunion para continuar la conversacion con el cliente.", "completo": true}}
+
+Ahora responde al mensaje anterior. JSON sin markdown:
+"""
+
+        try:
+            system_prompt = "Eres un extractor de información que responde solo con JSON válido. No incluyas markdown, explicaciones ni texto adicional."
+
+            # Crear mensajes para la API
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt_extraccion},
+            ]
+
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": self.glm_service.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+
+            payload = {
+                "model": self.glm_service.model,
+                "max_tokens": 2000,
+                "messages": messages,
+            }
+
+            response = requests.post(
+                f"{self.glm_service.base_url}/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=15,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                texto_respuesta = data["content"][0]["text"].strip()
+
+                print(f"[CITA_SERVICE] 🔍 Respuesta cruda IA: {texto_respuesta}")
+
+                # Limpiar markdown si existe
+                if texto_respuesta.startswith("```json"):
+                    texto_respuesta = texto_respuesta[7:]
+                if texto_respuesta.startswith("```"):
+                    texto_respuesta = texto_respuesta[3:]
+                if texto_respuesta.endswith("```"):
+                    texto_respuesta = texto_respuesta[:-3]
+
+                datos_extraidos = json.loads(texto_respuesta.strip())
+
+                print(f"[CITA_SERVICE] Datos extraídos JSON: {datos_extraidos}")
+                datos_extraidos = self._ajustar_hora_ambigua(
+                    datos_extraidos,
+                    f"{contexto_conversacion}\n{mensaje}",
+                )
+
+                # Convertir fecha y hora a datetime
+                if datos_extraidos.get("fecha") and datos_extraidos.get("hora") and not datos_extraidos.get("motivo_incompleto"):
+                    fecha_hora_str = f"{datos_extraidos['fecha']} {datos_extraidos['hora']}"
+                    try:
+                        fecha_hora = datetime.strptime(fecha_hora_str, "%Y-%m-%d %H:%M")
+                        datos_extraidos["fecha_hora"] = fecha_hora
+                        datos_extraidos["completo"] = True
+                        print(f"[CITA_SERVICE] ✅ Fecha y hora parseadas: {fecha_hora}")
+                    except ValueError as e:
+                        print(f"[CITA_SERVICE] ❌ Error parseando fecha/hora: {e}")
+                        datos_extraidos["completo"] = False
+                else:
+                    print(f"[CITA_SERVICE] ❌ Falta fecha u hora. fecha={datos_extraidos.get('fecha')}, hora={datos_extraidos.get('hora')}")
+                    datos_extraidos["completo"] = False
+
+                return datos_extraidos
+
+        except Exception as e:
+            print(f"[CITA_SERVICE] ❌ Error extrayendo datos: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Fallback: intentar extracción básica con regex
+        print(f"[CITA_SERVICE] 🔄 Usando fallback para extracción")
+        return self._extraccion_fallback(mensaje, ahora)
+
+    def _extraccion_fallback(self, mensaje, ahora):
+        """Extracción básica de datos cuando la IA falla."""
+        from datetime import timedelta, datetime as dt
+
+        datos = {
+            "titulo": "Cita agendada",
+            "fecha": None,
+            "hora": None,
+            "duracion_minutos": 60,
+            "ubicacion": None,
+            "descripcion": mensaje[:200],
+            "completo": False,
+            "fecha_hora": None,
+        }
+
+        mensaje_lower = mensaje.lower()
+
+        # Extraer título básico
+        if "reunión" in mensaje_lower or "reunion" in mensaje_lower:
+            datos["titulo"] = "Reunión"
+        elif "cita" in mensaje_lower:
+            datos["titulo"] = "Cita"
+        elif "llamada" in mensaje_lower:
+            datos["titulo"] = "Llamada"
+        elif "quedada" in mensaje_lower:
+            datos["titulo"] = "Quedada"
+        elif "negocio" in mensaje_lower:
+            datos["titulo"] = "Reunión de negocio"
+
+        if 'meet' in mensaje_lower or 'google meet' in mensaje_lower:
+            datos["ubicacion"] = "Google Meet"
+            datos["titulo"] = "Reunión virtual"
+        elif re.search(r'\bmetro\b', mensaje_lower):
+            datos["ubicacion"] = "Metro"
+
+        # Mapeo de días de la semana
+        dias_semana = {
+            'lunes': 0, 'martes': 1, 'miércoles': 2, 'miercoles': 2,
+            'jueves': 3, 'viernes': 4, 'sábado': 5, 'sabado': 5,
+            'domingo': 6
+        }
+
+        # Detectar día de la semana
+        for dia, numero_dia in dias_semana.items():
+            if dia in mensaje_lower:
+                hoy = ahora.weekday()
+                dias_a_sumar = (numero_dia - hoy) % 7
+                if dias_a_sumar == 0:
+                    dias_a_sumar = 7  # Si es hoy, ir a la próxima semana
+                fecha = ahora + timedelta(days=dias_a_sumar)
+                datos["fecha"] = fecha.strftime("%Y-%m-%d")
+                break
+
+        # Detectar fecha relativa tradicional (con errores ortográficos comunes)
+        # Buscar "mañana" con variaciones comunes
+        maniana_pattern = re.search(r'\b(mañana|mañana|malana|manana|mnañana)\b', mensaje_lower, re.IGNORECASE)
+        if maniana_pattern and not datos.get("fecha"):
+            fecha = ahora + timedelta(days=1)
+            datos["fecha"] = fecha.strftime("%Y-%m-%d")
+        elif "pasado mañana" in mensaje_lower and not datos.get("fecha"):
+            fecha = ahora + timedelta(days=2)
+            datos["fecha"] = fecha.strftime("%Y-%m-%d")
+
+        # Extraer hora con varios formatos
+        # Formato HH:MM
+        hora_match = re.search(r'(\d{1,2}):(\d{2})', mensaje)
+        if hora_match:
+            hora = int(hora_match.group(1))
+            minuto = int(hora_match.group(2))
+            datos["hora"] = f"{hora:02d}:{minuto:02d}"
+        else:
+            # Detectar formato "tipo X de la tarde/mañana/noche", "a las X pm/am", etc.
+            tarde_match = re.search(r'(?:tipo|a las?|por la|en la)\s+(\d{1,2})\s*(?:de la)?\s*(tarde|noche|mañana|pm|am)', mensaje_lower)
+            if tarde_match:
+                hora_num = int(tarde_match.group(1))
+                periodo = tarde_match.group(2)
+
+                if periodo in ('mañana', 'am') and hora_num <= 12:
+                    datos["hora"] = f"{hora_num:02d}:00"
+                elif periodo == 'tarde' or (periodo == 'pm' and hora_num < 12):
+                    # Convertir a formato 24h (1-12 de la tarde -> 13:00-23:00)
+                    hora_24 = hora_num + 12
+                    if hora_24 == 24:
+                        hora_24 = 12  # 12 de la tarde = 12:00, no 24:00
+                    datos["hora"] = f"{hora_24:02d}:00"
+                elif periodo == 'noche' or periodo == 'pm':
+                    # Convertir a formato 24h (1-12 de la noche -> 18:00-23:00)
+                    hora_24 = hora_num + 12 if hora_num < 12 else hora_num
+                    datos["hora"] = f"{hora_24:02d}:00"
+            else:
+                # Detectar "a las X" sin periodo - asumir AM (mañana) por defecto
+                solo_hora_match = re.search(r'a las?\s+(\d{1,2})\b', mensaje_lower)
+                if solo_hora_match:
+                    hora_num = int(solo_hora_match.group(1))
+                    if 1 <= hora_num <= 12:
+                        datos["hora"] = f"{hora_num:02d}:00"
+                    elif 13 <= hora_num <= 23:
+                        datos["hora"] = f"{hora_num:02d}:00"
+
+        # Crear fecha_hora si tenemos fecha y hora
+        datos = self._ajustar_hora_ambigua(datos, mensaje)
+        if datos.get("fecha") and datos.get("hora") and not datos.get("motivo_incompleto"):
+            fecha_hora_str = f"{datos['fecha']} {datos['hora']}"
+            try:
+                datos["fecha_hora"] = dt.strptime(fecha_hora_str, "%Y-%m-%d %H:%M")
+                datos["completo"] = True
+            except ValueError:
+                pass
+
+        print(f"[CITA_FALLBACK] 📋 Resultado fallback: {datos}")
+
+        return datos
+
+    def verificar_conflicto_cita(self, perfil, fecha_hora, duracion_minutos, cita_id=None):
+        """Verifica si existe un conflicto con otra cita ya agendada.
+
+        Args:
+            perfil: PerfilAsistente del usuario
+            fecha_hora: datetime de la cita propuesta
+            duracion_minutos: duración de la cita propuesta
+            cita_id: ID de la cita a excluir (para ediciones)
+
+        Returns:
+            dict: Información del conflicto con claves:
+                - tiene_conflicto: bool
+                - cita_conflicto: Cita o None
+                - motivo: str con la razón del conflicto
+        """
+        from asistente.models import Cita
+        from datetime import timedelta
+
+        # Asegurar que fecha_hora tenga timezone awareness
+        hora_inicio = self._normalizar_inicio_cita(fecha_hora)
+
+        hora_fin = hora_inicio + timedelta(minutes=duracion_minutos)
+        inicio_dia, fin_dia = self._rango_dia_local(hora_inicio)
+
+        print(f"[CITA_SERVICE] verificar_conflicto_cita:")
+        print(f"  - hora_inicio: {hora_inicio}")
+        print(f"  - hora_fin: {hora_fin}")
+        print(f"  - duracion: {duracion_minutos} min")
+
+        # Buscar citas del mismo día que solapen con el horario propuesto
+        # Consideramos TODAS las citas excepto las canceladas
+        # (pendiente, confirmada, completada) para evitar duplicados
+        citas_conflicto = Cita.objects.filter(
+            perfil=perfil,
+            fecha_hora__gte=inicio_dia,
+            fecha_hora__lt=fin_dia,
+        ).exclude(
+            estado='cancelada'
+        )
+
+        # Si estamos editando una cita, excluirla de la búsqueda
+        if cita_id:
+            citas_conflicto = citas_conflicto.exclude(id=cita_id)
+
+        print(f"[CITA_SERVICE] Citas encontradas en el día: {citas_conflicto.count()}")
+
+        # PRIMERO: Verificar si hay una cita exactamente a la misma hora
+        cita_exacta = None
+        for cita in citas_conflicto:
+            cita_inicio_local = timezone.localtime(cita.fecha_hora).replace(second=0, microsecond=0)
+            hora_inicio_local = timezone.localtime(hora_inicio).replace(second=0, microsecond=0)
+            if cita_inicio_local == hora_inicio_local:
+                cita_exacta = cita
+                break
+
+        if cita_exacta:
+            print(f"[CITA_SERVICE] ¡CITA EXACTA DETECTADA a la misma hora!")
+            return {
+                'tiene_conflicto': True,
+                'cita_conflicto': cita_exacta,
+                'motivo': f'Ya tienes una cita agendada exactamente a esa hora: {cita_exacta.titulo} '
+                         f'el {self._formatear_fecha_cita(cita_exacta.fecha_hora)}. '
+                         f'Por favor, elige otro horario.',
+                'todas_conflictos': [cita_exacta]
+            }
+
+        citas_en_conflicto = []
+        for cita in citas_conflicto:
+            cita_inicio = self._normalizar_inicio_cita(cita.fecha_hora)
+            cita_fin = cita.fecha_hora + timedelta(minutes=cita.duracion_minutos)
+
+            print(f"[CITA_SERVICE] Verificando cita existente: {cita.titulo}")
+            print(f"  - estado: {cita.estado}")
+            print(f"  - cita_inicio: {cita_inicio}")
+            print(f"  - cita_fin: {cita_fin}")
+
+            # Verificar si hay solapamiento de horarios
+            # Hay conflicto si: (nuestra_inicio < cita_fin) AND (nuestra_fin > cita_inicio)
+            if hora_inicio < cita_fin and hora_fin > cita_inicio:
+                print(f"[CITA_SERVICE] ¡CONFLICTO DETECTADO!")
+                citas_en_conflicto.append(cita)
+            else:
+                print(f"[CITA_SERVICE] Sin conflicto con esta cita")
+
+        if citas_en_conflicto:
+            # Priorizar citas confirmadas sobre pendientes
+            cita_conflicto = next(
+                (c for c in citas_en_conflicto if c.estado == 'confirmada'),
+                citas_en_conflicto[0]
+            )
+            estado_str = "confirmada" if cita_conflicto.estado == 'confirmada' else "pendiente"
+            return {
+                'tiene_conflicto': True,
+                'cita_conflicto': cita_conflicto,
+                'motivo': f'Ya tienes una cita {estado_str} agendada: {cita_conflicto.titulo} '
+                         f'el {self._formatear_fecha_cita(cita_conflicto.fecha_hora)} '
+                         f'durante {cita_conflicto.duracion_minutos} minutos.',
+                'todas_conflictos': citas_en_conflicto
+            }
+
+        return {
+            'tiene_conflicto': False,
+            'cita_conflicto': None,
+            'motivo': '',
+            'todas_conflictos': []
+        }
+
+    def calcular_horarios_disponibles(self, perfil, fecha, duracion_minutos=60,
+                                      hora_inicio="08:00", hora_fin="18:00",
+                                      intervalo_minutos=30):
+        """Calcula horarios disponibles para un día específico.
+
+        Args:
+            perfil: PerfilAsistente del usuario
+            fecha: date del día a consultar
+            duracion_minutos: duración requerida para la cita
+            hora_inicio: hora de inicio del día laboral (formato "HH:MM")
+            hora_fin: hora de fin del día laboral (formato "HH:MM")
+            intervalo_minutos: intervalo entre posibles horarios
+
+        Returns:
+            list: Lista de datetime con horarios disponibles
+        """
+        from asistente.models import Cita
+        from datetime import datetime, timedelta, time
+
+        # Convertir string a time
+        hora_inicio_time = datetime.strptime(hora_inicio, "%H:%M").time()
+        hora_fin_time = datetime.strptime(hora_fin, "%H:%M").time()
+
+        # Crear datetime para inicio y fin del día
+        inicio_dia = self._normalizar_fecha_hora(datetime.combine(fecha, hora_inicio_time))
+        fin_dia = self._normalizar_fecha_hora(datetime.combine(fecha, hora_fin_time))
+
+        # Obtener todas las citas del día (excepto canceladas)
+        # Incluimos pendientes, confirmadas y completadas para evitar solapamientos
+        citas_dia = Cita.objects.filter(
+            perfil=perfil,
+            fecha_hora__gte=inicio_dia,
+            fecha_hora__lt=inicio_dia + timedelta(days=1),
+        ).exclude(
+            estado='cancelada'
+        ).order_by('fecha_hora')
+
+        # Marcar los horarios ocupados
+        horarios_ocupados = []
+        for cita in citas_dia:
+            cita_inicio = cita.fecha_hora
+            cita_fin = cita.fecha_hora + timedelta(minutes=cita.duracion_minutos)
+            horarios_ocupados.append((cita_inicio, cita_fin))
+
+        # Generar posibles horarios
+        horarios_disponibles = []
+        hora_actual = inicio_dia
+
+        while hora_actual + timedelta(minutes=duracion_minutos) <= fin_dia:
+            hora_fin_propuesta = hora_actual + timedelta(minutes=duracion_minutos)
+
+            # Verificar si este horario choca con alguna cita existente
+            disponible = True
+            for cita_inicio, cita_fin in horarios_ocupados:
+                # Hay conflicto si: (hora_actual < cita_fin) AND (hora_fin_propuesta > cita_inicio)
+                if hora_actual < cita_fin and hora_fin_propuesta > cita_inicio:
+                    disponible = False
+                    break
+
+            if disponible:
+                horarios_disponibles.append(hora_actual)
+
+            # Avanzar al siguiente intervalo
+            hora_actual = hora_actual + timedelta(minutes=intervalo_minutos)
+
+        return horarios_disponibles
+
+    def formatear_horarios_disponibles(self, horarios):
+        """Formatea una lista de horarios disponibles para mostrar al usuario.
+
+        Args:
+            horarios: list de datetime
+
+        Returns:
+            str: Mensaje formateado con horarios disponibles
+        """
+        if not horarios:
+            return "No hay horarios disponibles para este día."
+
+        from django.utils import timezone
+
+        # Agrupar por mañana/tarde
+        manana = []
+        tarde = []
+
+        for h in horarios:
+            hora = h.hour
+            if hora < 13:
+                manana.append(h.strftime("%H:%M"))
+            else:
+                tarde.append(h.strftime("%H:%M"))
+
+        lineas = []
+        if manana:
+            lineas.append(f"*Mañana:* {', '.join(manana[:10])}")
+        if tarde:
+            lineas.append(f"*Tarde:* {', '.join(tarde[:10])}")
+
+        if len(manana) > 10 or len(tarde) > 10:
+            lineas.append(f"\nY más horarios disponibles...")
+
+        return "\n".join(lineas)
+
+    def crear_cita(self, conversacion, datos_cita, linea_whatsapp=None, validar_conflicto=True):
+        """Crea una cita en la base de datos con sus datos.
+
+        Args:
+            conversacion: Conversacion asociada
+            datos_cita: dict con los datos de la cita
+            linea_whatsapp: str opcional con la línea de WhatsApp
+            validar_conflicto: bool para validar conflictos antes de crear
+
+        Returns:
+            tuple: (Cita o None, dict con resultado)
+                El dict tiene: {'exito': bool, 'mensaje': str, 'conflicto': dict o None}
+        """
+        from asistente.models import Cita
+
+        fecha_hora = self._normalizar_inicio_cita(datos_cita.get("fecha_hora"))
+        duracion = datos_cita.get("duracion_minutos", 60)
+
+        print(f"[CITA_SERVICE] crear_cita llamado - fecha_hora: {fecha_hora}, duracion: {duracion}")
+        print(f"[CITA_SERVICE] validar_conflicto: {validar_conflicto}")
+
+        try:
+            with transaction.atomic():
+                # Bloquear las citas del día mientras validamos y creamos. Así dos
+                # mensajes simultáneos no pueden reservar el mismo espacio a la vez.
+                if validar_conflicto and fecha_hora:
+                    list(Cita.objects.select_for_update().filter(
+                        perfil=conversacion.perfil,
+                        fecha_hora__gte=self._rango_dia_local(fecha_hora)[0],
+                        fecha_hora__lt=self._rango_dia_local(fecha_hora)[1],
+                    ).exclude(estado='cancelada'))
+
+                    # ─── VALIDACIÓN DE DISPONIBILIDAD DEL DÍA ─────────────────
+                    horarios_disponibles = self.calcular_horarios_disponibles(
+                        conversacion.perfil,
+                        fecha_hora.date(),
+                        duracion
+                    )
+
+                    print(f"[CITA_SERVICE] Horarios disponibles ese día: {len(horarios_disponibles)}")
+
+                    # Si no hay horarios disponibles, el día está completo
+                    if not horarios_disponibles:
+                        mensaje = (
+                            "⚠️ *El día está completamente ocupado*\n\n"
+                            "No hay horarios disponibles para agendar en esa fecha. "
+                            "Por favor, selecciona otro día diferente."
+                        )
+                        return None, {
+                            'exito': False,
+                            'mensaje': mensaje,
+                            'conflicto': None,
+                            'dia_completo': True
+                        }
+
+                    resultado_conflicto = self.verificar_conflicto_cita(
+                        conversacion.perfil,
+                        fecha_hora,
+                        duracion
+                    )
+
+                    print(f"[CITA_SERVICE] resultado_conflicto: {resultado_conflicto}")
+
+                    if resultado_conflicto['tiene_conflicto']:
+                        mensaje = f"{resultado_conflicto['motivo']}\n\n"
+                        mensaje += "*Horarios disponibles ese día:*\n"
+                        mensaje += self.formatear_horarios_disponibles(horarios_disponibles)
+                        mensaje += "\n\n¿Te gustaría agendar en otro horario?"
+
+                        return None, {
+                            'exito': False,
+                            'mensaje': mensaje,
+                            'conflicto': resultado_conflicto,
+                            'horarios_disponibles': horarios_disponibles
+                        }
+
+                # Crear la cita solo después de validar disponibilidad.
+                cita = Cita.objects.create(
+                    perfil=conversacion.perfil,
+                    conversacion=conversacion,
+                    titulo=datos_cita.get("titulo", "Cita agendada"),
+                    descripcion=datos_cita.get("descripcion"),
+                    fecha_hora=fecha_hora,
+                    duracion_minutos=duracion,
+                    ubicacion=datos_cita.get("ubicacion"),
+                    tipo_ubicacion='virtual' if datos_cita.get("ubicacion") and any(
+                        palabra in datos_cita["ubicacion"].lower() for palabra in ["zoom", "meet", "teams", "virtual", "online"]
+                    ) else 'presencial',
+                    estado='pendiente',
+                    recordatorio_minutos_antes=5,
+                )
+        except IntegrityError:
+            resultado_conflicto = self.verificar_conflicto_cita(
+                conversacion.perfil,
+                fecha_hora,
+                duracion
+            )
+            mensaje = (
+                "Ese horario acaba de ser reservado por otra cita. "
+                "Por favor, elige otro horario."
+            )
+            if resultado_conflicto.get('motivo'):
+                mensaje = f"{resultado_conflicto['motivo']}"
+            return None, {
+                'exito': False,
+                'mensaje': mensaje,
+                'conflicto': resultado_conflicto,
+            }
+
+        # Crear recordatorio automático
+        cita.crear_recordatorio()
+
+        print(f"[CITA_SERVICE] Cita creada: {cita.titulo} - {cita.fecha_hora}")
+
+        return cita, {
+            'exito': True,
+            'mensaje': 'Cita creada exitosamente',
+            'conflicto': None
+        }
+
+    def enviar_recordatorio_cita(self, cita_id):
+        """Envía un recordatorio por WhatsApp para una cita.
+
+        Args:
+            cita_id: ID de la cita
+
+        Returns:
+            tuple: (exito: bool, mensaje: str)
+        """
+        from asistente.models import Cita
+
+        try:
+            cita = Cita.objects.get(id=cita_id)
+        except Cita.DoesNotExist:
+            return False, "Cita no encontrada"
+
+        if not cita.conversacion:
+            return False, "La cita no tiene conversación asociada"
+
+        # Extraer número de WhatsApp
+        numero_whatsapp = cita.conversacion.numero_whatsapp
+        linea = 'principal'
+        if ':' in numero_whatsapp:
+            partes = numero_whatsapp.split(':')
+            linea = partes[0]
+            numero_whatsapp = partes[1] if len(partes) > 1 else partes[0]
+
+        mensaje = (
+            f"Recordatorio de cita: {cita.titulo}\n"
+            f"En {cita.recordatorio_minutos_antes} minutos ({self._formatear_fecha_cita(cita.fecha_hora)})\n"
+        )
+        if cita.ubicacion:
+            mensaje += f"📍 {cita.ubicacion}\n"
+
+        try:
+            scheduler = obtener_scheduler()
+            resultado = scheduler._enviar_whatsapp({
+                'numero': numero_whatsapp,
+                'mensaje': mensaje,
+                'linea': linea,
+            }, cita.perfil)
+
+            if resultado.get('exito'):
+                cita.recordatorio_enviado = True
+                cita.save()
+                return True, "Recordatorio enviado"
+            else:
+                return False, resultado.get('error', 'Error desconocido')
+
+        except Exception as e:
+            return False, str(e)
+
+    def formatear_confirmacion_cita(self, cita):
+        """Genera un mensaje de confirmación formateado.
+
+        Args:
+            cita: Objeto Cita
+
+        Returns:
+            str: Mensaje de confirmación formateado
+        """
+        cierres = [
+            "Queda confirmada. Gracias por compartirnos tu disponibilidad.",
+            "Listo, queda reservado ese espacio. Sera un gusto atenderte.",
+            "Perfecto, dejamos ese espacio separado para revisarlo con calma.",
+        ]
+        cierre = cierres[cita.id % len(cierres)] if getattr(cita, 'id', None) else cierres[0]
+
+        mensaje = f"{cierre}\n\n"
+        mensaje += f"{cita.titulo}\n"
+        mensaje += f"{self._formatear_fecha_cita(cita.fecha_hora)}\n"
+
+        if cita.ubicacion:
+            mensaje += f"📍 {cita.ubicacion}\n"
+
+        if cita.duracion_minutos:
+            mensaje += f"Duración: {cita.duracion_minutos} minutos\n"
+
+        mensaje += f"\nTe enviaremos un recordatorio {cita.recordatorio_minutos_antes} minutos antes."
+
+        return mensaje

@@ -1,11 +1,244 @@
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import TestCase
+from django.utils import timezone
 from django.urls import reverse
+from datetime import timedelta
 from unittest.mock import patch
 
-from .models import Conversacion, Mensaje, PerfilAsistente
+from .models import Cita, Conversacion, Mensaje, PerfilAsistente
+from .services import CitaService, GLMService
 from .views import normalizar_session_id, obtener_perfil_usuario
+
+
+class CitaServiceDisponibilidadTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='agenda', password='clave')
+        self.perfil = PerfilAsistente.objects.create(
+            usuario=self.user,
+            nombre_usuario='Agenda',
+            nombre_asistente='Asistente Agenda',
+        )
+        self.conversacion = Conversacion.objects.create(
+            perfil=self.perfil,
+            numero_whatsapp='ventas:573001234567',
+            nombre_contacto='Cliente',
+        )
+        self.service = CitaService()
+
+    def test_no_crea_dos_citas_a_la_misma_hora(self):
+        fecha_hora = timezone.now() + timedelta(days=2)
+        fecha_hora = fecha_hora.replace(hour=10, minute=0, second=0, microsecond=0)
+
+        with patch.object(Cita, 'crear_recordatorio', return_value=None):
+            cita, resultado = self.service.crear_cita(self.conversacion, {
+                'titulo': 'Primera cita',
+                'fecha_hora': fecha_hora,
+                'duracion_minutos': 60,
+                'descripcion': 'Primera cita',
+            })
+            cita_duplicada, resultado_duplicado = self.service.crear_cita(self.conversacion, {
+                'titulo': 'Segunda cita',
+                'fecha_hora': fecha_hora,
+                'duracion_minutos': 60,
+                'descripcion': 'Segunda cita',
+            })
+
+        self.assertTrue(resultado['exito'])
+        self.assertIsNotNone(cita)
+        self.assertFalse(resultado_duplicado['exito'])
+        self.assertIsNone(cita_duplicada)
+        self.assertTrue(resultado_duplicado['conflicto']['tiene_conflicto'])
+        self.assertEqual(Cita.objects.filter(perfil=self.perfil).count(), 1)
+
+    def test_no_crea_cita_solapada_con_otra(self):
+        fecha_hora = timezone.now() + timedelta(days=3)
+        fecha_hora = fecha_hora.replace(hour=14, minute=0, second=0, microsecond=0)
+
+        with patch.object(Cita, 'crear_recordatorio', return_value=None):
+            self.service.crear_cita(self.conversacion, {
+                'titulo': 'Cita larga',
+                'fecha_hora': fecha_hora,
+                'duracion_minutos': 60,
+                'descripcion': 'Cita larga',
+            })
+            cita_solapada, resultado_solapado = self.service.crear_cita(self.conversacion, {
+                'titulo': 'Cita solapada',
+                'fecha_hora': fecha_hora + timedelta(minutes=30),
+                'duracion_minutos': 60,
+                'descripcion': 'Cita solapada',
+            })
+
+        self.assertFalse(resultado_solapado['exito'])
+        self.assertIsNone(cita_solapada)
+        self.assertTrue(resultado_solapado['conflicto']['tiene_conflicto'])
+        self.assertEqual(Cita.objects.filter(perfil=self.perfil).count(), 1)
+
+    def test_no_crea_dos_citas_a_la_misma_hora_local(self):
+        fecha_hora = timezone.make_aware(
+            timezone.datetime(2026, 5, 24, 17, 0, 0),
+            timezone.get_current_timezone(),
+        )
+
+        with patch.object(Cita, 'crear_recordatorio', return_value=None):
+            cita, resultado = self.service.crear_cita(self.conversacion, {
+                'titulo': 'Primera cita',
+                'fecha_hora': fecha_hora,
+                'duracion_minutos': 60,
+                'descripcion': 'Primera cita',
+            })
+            cita_duplicada, resultado_duplicado = self.service.crear_cita(self.conversacion, {
+                'titulo': 'Segunda cita',
+                'fecha_hora': fecha_hora.replace(second=30, microsecond=999),
+                'duracion_minutos': 60,
+                'descripcion': 'Segunda cita',
+            })
+
+        self.assertTrue(resultado['exito'])
+        self.assertIsNotNone(cita)
+        self.assertFalse(resultado_duplicado['exito'])
+        self.assertIsNone(cita_duplicada)
+        self.assertEqual(Cita.objects.filter(perfil=self.perfil).count(), 1)
+
+    def test_hora_ambigua_temprana_no_se_agenda_como_madrugada(self):
+        datos = self.service._extraccion_fallback('mañana a las 5', timezone.datetime(2026, 5, 24, 10, 0))
+
+        self.assertFalse(datos['completo'])
+        self.assertIsNone(datos['fecha_hora'])
+        self.assertEqual(datos['motivo_incompleto'], 'Hora ambigua: falta aclarar si es de la mañana o de la tarde.')
+
+    def test_hora_ambigua_con_tarde_se_convierte_a_24_horas(self):
+        datos = self.service._extraccion_fallback('mañana a las 5 de la tarde', timezone.datetime(2026, 5, 24, 10, 0))
+
+        self.assertTrue(datos['completo'])
+        self.assertEqual(datos['hora'], '17:00')
+
+
+class CitaServiceIntencionTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='intencion', password='clave')
+        self.perfil = PerfilAsistente.objects.create(
+            usuario=self.user,
+            nombre_usuario='Dagi',
+            nombre_asistente='Asistente',
+        )
+        self.conversacion = Conversacion.objects.create(
+            perfil=self.perfil,
+            numero_whatsapp='ventas:573001234567',
+            nombre_contacto='Cliente',
+        )
+        self.service = CitaService()
+
+    def test_mensajes_normales_no_activan_agendamiento(self):
+        mensajes = [
+            'perfecto gracias',
+            '14:30',
+            'mañana te escribo',
+            'que servicios ofrecen?',
+            'hola, cuanto cuesta?',
+        ]
+
+        for mensaje in mensajes:
+            with self.subTest(mensaje=mensaje):
+                self.assertFalse(self.service.detectar_intencion_agendamiento(mensaje, self.conversacion))
+
+    def test_fragmento_si_solo_activa_si_el_bot_espera_dato_de_cita(self):
+        self.assertFalse(self.service.detectar_intencion_agendamiento('sí', self.conversacion))
+
+        Mensaje.objects.create(
+            conversacion=self.conversacion,
+            origen='saliente',
+            contenido='Para agendar necesito que me indiques el día y la hora exactos.',
+        )
+
+        self.assertTrue(self.service.detectar_intencion_agendamiento('sí', self.conversacion))
+
+    def test_solicitud_explicita_de_cita_si_activa_agendamiento(self):
+        self.assertTrue(
+            self.service.detectar_intencion_agendamiento(
+                'quiero agendar una cita para mañana',
+                self.conversacion,
+            )
+        )
+
+
+class GLMServiceRoutingTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='modelos', password='clave')
+        self.perfil = PerfilAsistente.objects.create(
+            usuario=self.user,
+            nombre_usuario='Dagi',
+            nombre_asistente='Asistente',
+            usar_groq_respuestas_normales=True,
+            usar_groq_lexico_complejo=True,
+        )
+
+    def test_audio_usa_groq_primero_y_escala_a_zai_si_respuesta_debil(self):
+        service = GLMService()
+        mensaje = 'Explica la arquitectura de Docker para este caso.'
+
+        with patch.object(service, '_chat_groq', return_value='No estoy seguro.') as groq_mock, \
+                patch.object(service, '_chat_zai', return_value='Respuesta segura desde Z.AI.') as zai_mock:
+            respuesta = service.chat(
+                mensaje,
+                self.perfil,
+                canal='whatsapp',
+                contacto={'forzar_groq_primero': True},
+            )
+
+        self.assertEqual(respuesta, 'Respuesta segura desde Z.AI.')
+        groq_mock.assert_called_once()
+        zai_mock.assert_called_once()
+
+    def test_texto_complejo_sigue_yendo_directo_a_zai(self):
+        service = GLMService()
+        mensaje = 'Explica la arquitectura de Docker para este caso.'
+
+        with patch.object(service, '_chat_groq', return_value='Groq') as groq_mock, \
+                patch.object(service, '_chat_zai', return_value='Respuesta desde Z.AI.') as zai_mock:
+            respuesta = service.chat(mensaje, self.perfil, canal='whatsapp')
+
+        self.assertEqual(respuesta, 'Respuesta desde Z.AI.')
+        groq_mock.assert_not_called()
+        zai_mock.assert_called_once()
+
+
+class GLMServicePromptTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='prompt', password='clave')
+        self.perfil = PerfilAsistente.objects.create(
+            usuario=self.user,
+            nombre_usuario='Dagi',
+            nombre_asistente='Asistente',
+            cv_texto='Servicios: desarrollo de software, automatizacion y asistentes para WhatsApp.',
+        )
+
+    def test_prompt_whatsapp_guia_respuesta_consultiva(self):
+        prompt = GLMService().construir_prompt_sistema(
+            self.perfil,
+            canal='whatsapp',
+            contacto={'nombre': 'Cliente', 'numero': '573001234567'},
+            consulta='Necesito mejorar mi negocio',
+        )
+
+        self.assertIn('responde de forma consultiva', prompt)
+        self.assertIn('pregunta por su nicho', prompt)
+        self.assertIn('NO menciones productos por nombre todavia', prompt)
+        self.assertIn('primero valida la idea del cliente', prompt)
+        self.assertIn('que quiere crear, para quien seria y que problema quiere resolver', prompt)
+        self.assertIn('Solo despues de entender esa idea puedes sugerir 2 o 3 caminos concretos', prompt)
+        self.assertIn('No menciones un producto especifico por nombre si el cliente no lo conoce', prompt)
+        self.assertIn('Si el cliente solo menciona su tipo de negocio o nicho', prompt)
+        self.assertIn('Antes de recomendar un producto por nombre necesitas al menos dos señales concretas', prompt)
+        self.assertIn('Ejemplo correcto si dice "Es para un almacen"', prompt)
+        self.assertIn('Ejemplo incorrecto: "Necesitas NOVA..."', prompt)
+        self.assertIn('Prioriza indagar antes que explicar', prompt)
+        self.assertIn('ofrece opciones de contacto/agendamiento', prompt)
+        self.assertIn('llamada telefonica, seguir por WhatsApp o reunion por Meet', prompt)
+        self.assertIn('Maneja cierres formales, breves y variados', prompt)
+        self.assertIn('Fecha y hora local de referencia', prompt)
+        self.assertIn('No presiones la venta', prompt)
+        self.assertIn('Haz maximo una pregunta clara', prompt)
 
 
 class LoginSeguroTests(TestCase):
